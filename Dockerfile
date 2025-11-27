@@ -34,14 +34,15 @@ RUN /opt/airflow_venv/bin/pip install --no-cache-dir \
 ENV AIRFLOW_HOME=/opt/airflow
 RUN mkdir -p $AIRFLOW_HOME
 
-# Airflow Configuration for Proxy
+# Airflow 3.x Configuration for Proxy
 ENV AIRFLOW__WEBSERVER__BASE_URL=http://localhost:8888/airflow-webserver
 ENV AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
+ENV AIRFLOW__API__BASE_URL=http://localhost:8888/airflow-api
 ENV AIRFLOW__CORE__EXECUTOR=SequentialExecutor
 ENV AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
 ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
 
-# Configure Jupyter Server Proxy for Airflow Webserver and Scheduler
+# Configure Jupyter Server Proxy for Airflow Webserver, API Server, and Scheduler
 # We append to the jupyter_server_config.py if it exists, or create it
 RUN mkdir -p /root/.jupyter && \
     echo "c.ServerProxy.servers = { \
@@ -51,6 +52,15 @@ RUN mkdir -p /root/.jupyter && \
     'absolute_url': True, \
     'launcher_entry': { \
     'title': 'Airflow Webserver', \
+    'icon_path': '/opt/airflow_venv/lib/python3.11/site-packages/airflow/www/static/pin_100.png' \
+    } \
+    }, \
+    'airflow-api': { \
+    'command': ['/opt/airflow_venv/bin/airflow', 'api', '--port', '{port}'], \
+    'timeout': 120, \
+    'absolute_url': True, \
+    'launcher_entry': { \
+    'title': 'Airflow API Server', \
     'icon_path': '/opt/airflow_venv/lib/python3.11/site-packages/airflow/www/static/pin_100.png' \
     } \
     }, \
@@ -87,7 +97,7 @@ RUN chmod +x /opt/airflow/entrypoint.sh
 WORKDIR $AIRFLOW_HOME
 
 # Expose ports
-EXPOSE 8888 8080 8999
+EXPOSE 8888 8080 9091 8999
 
 # Set default shell to use the venv
 ENV PATH="/opt/airflow_venv/bin:$PATH"
