@@ -13,3 +13,5 @@ dags/__pycache__/
 venv/
 .vscode/
 !/.vscode/launch.json
+
+logs

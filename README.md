@@ -1,12 +1,20 @@
 # Docker Project: Airflow + Jupyter + VS Code
 
 This project provides a complete Docker-based development environment for Apache Airflow, integrated with JupyterLab and VS Code (code-server).
+This a handy way of working with airflow in banks , insurance companies where you might not have access to docker on your local machine and testing and debugging dags becomes difficult. 
+But the platform teams can use this image to create a sort of workspace as a service to give Data engineers an environment to test and debug their dags.
+
+When i was running platforms in the bank i used to work , giving this to our users was a big hit and created a low resistance path to migrate to airflow from legacy or impropmptu schedulers and also helped in reducing End User Computes(EUCs). 
+Our onboarding rates exploded after this.
+
 
 ## Features
 
--   **Apache Airflow 2.11.0**:
+-   **Apache Airflow 3.1.1**:
+    -   Modern service-oriented architecture with dedicated API server.
     -   Configured with `SequentialExecutor` and SQLite.
-    -   Webserver and Scheduler logs accessible via Jupyter Launcher.
+    -   **API Server**: New in Airflow 3.x - serves as the sole gateway to the metadata database.
+    -   Webserver, API Server, and Scheduler logs accessible via Jupyter Launcher.
     -   Virtual environment at `/opt/airflow_venv`.
 -   **JupyterLab**:
     -   Serves as the main entry point.
@@ -37,6 +45,7 @@ This project provides a complete Docker-based development environment for Apache
 3.  **Launch Tools**:
     -   **VS Code**: Click the "VS Code" icon in the launcher.
     -   **Airflow Webserver**: Click the "Airflow Webserver" icon.
+    -   **Airflow API Server**: Click the "Airflow API Server" icon (new in Airflow 3.x).
     -   **Scheduler Logs**: Click the "Airflow Scheduler Logs" icon.
 
 ## Development

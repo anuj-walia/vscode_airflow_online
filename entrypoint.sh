@@ -7,7 +7,8 @@ source /opt/airflow_venv/bin/activate
 # Initialize Airflow DB
 if [ ! -f "/opt/airflow/airflow.db" ]; then
     echo "Initializing Airflow DB..."
-    airflow db init
+    # Airflow 3.x uses 'db migrate' instead of 'db init'
+    airflow db migrate
     
     echo "Creating Admin User..."
     airflow users create \
