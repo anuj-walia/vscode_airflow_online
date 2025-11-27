@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  airflow-jupyter:
+    build: .
+    image: airflow-jupyter-vscode
+    ports:
+      - "8888:8888" # JupyterLab
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      # Mount the project root to a workspace folder for easy access in VS Code
+      - .:/opt/airflow/workspace
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=SequentialExecutor
+    restart: unless-stopped
