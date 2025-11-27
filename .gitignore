@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+airflow.db
+airflow.cfg
+webserver_config.py
+logs/
+plugins/
+# Keep dags directory but ignore pycache inside it
+dags/__pycache__/
+# Ignore the virtual environment if created locally (though we use docker)
+venv/
+.vscode/
+!/.vscode/launch.json
