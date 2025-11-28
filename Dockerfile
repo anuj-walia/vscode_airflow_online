@@ -21,6 +21,7 @@ COPY requirements.txt /tmp/requirements.txt
 
 # Install Python dependencies in the virtual environment
 RUN /opt/airflow_venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
+RUN /opt/airflow_venv/bin/pip install "apache-airflow==3.1.3" --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-3.1.3/constraints-3.11.txt"
 
 # Install Jupyter and proxies in the base environment (or venv, but user asked for venv to be default)
 # We'll install jupyter in the venv as well so it has access to airflow libs
@@ -46,17 +47,17 @@ ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
 # We append to the jupyter_server_config.py if it exists, or create it
 RUN mkdir -p /root/.jupyter && \
     echo "c.ServerProxy.servers = { \
-    'airflow-webserver': { \
-    'command': ['/opt/airflow_venv/bin/airflow', 'webserver', '--port', '{port}'], \
-    'timeout': 120, \
-    'absolute_url': True, \
-    'launcher_entry': { \
-    'title': 'Airflow Webserver', \
-    'icon_path': '/opt/airflow_venv/lib/python3.11/site-packages/airflow/www/static/pin_100.png' \
-    } \
-    }, \
+    # 'airflow-webserver': { \
+    # 'command': ['/opt/airflow_venv/bin/airflow', 'webserver', '--port', '{port}'], \
+    # 'timeout': 120, \
+    # 'absolute_url': True, \
+    # 'launcher_entry': { \
+    # 'title': 'Airflow Webserver', \
+    # 'icon_path': '/opt/airflow_venv/lib/python3.11/site-packages/airflow/www/static/pin_100.png' \
+    # } \
+    # }, \
     'airflow-api': { \
-    'command': ['/opt/airflow_venv/bin/airflow', 'api', '--port', '{port}'], \
+    'command': ['/opt/airflow_venv/bin/airflow', 'api-server', '--port', '{port}'], \
     'timeout': 120, \
     'absolute_url': True, \
     'launcher_entry': { \
