@@ -27,8 +27,7 @@ RUN /opt/airflow_venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
 RUN /opt/airflow_venv/bin/pip install --no-cache-dir \
     jupyterlab \
     jupyterhub \
-    jupyter-server-proxy \
-    jupyter-vscode-proxy
+    jupyter-server-proxy
 
 # Set up Airflow Home
 ENV AIRFLOW_HOME=/opt/airflow
@@ -44,9 +43,10 @@ ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
 # Create SVG icons for Jupyter launcher (icon_path requires SVG, not PNG)
 RUN mkdir -p /opt/airflow/icons && \
     echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#017CEE"/><text x="32" y="42" text-anchor="middle" font-size="28" font-family="Arial" fill="white" font-weight="bold">A</text></svg>' > /opt/airflow/icons/airflow-webserver.svg && \
-    echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#4A4A4A"/><text x="32" y="42" text-anchor="middle" font-size="24" font-family="Arial" fill="#00D084" font-weight="bold">S</text></svg>' > /opt/airflow/icons/airflow-scheduler.svg
+    echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#4A4A4A"/><text x="32" y="42" text-anchor="middle" font-size="24" font-family="Arial" fill="#00D084" font-weight="bold">S</text></svg>' > /opt/airflow/icons/airflow-scheduler.svg && \
+    echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#0078D7"/><text x="32" y="44" text-anchor="middle" font-size="26" font-family="Arial" fill="white" font-weight="bold">VS</text></svg>' > /opt/airflow/icons/vscode.svg
 
-# Configure Jupyter Server Proxy for Airflow Webserver and Scheduler
+# Configure Jupyter Server Proxy for Airflow Webserver, Scheduler, and VS Code
 RUN mkdir -p /root/.jupyter && \
     echo "c.ServerProxy.servers = { \
     'airflow-webserver': { \
@@ -66,6 +66,15 @@ RUN mkdir -p /root/.jupyter && \
     'launcher_entry': { \
     'title': 'Airflow Scheduler Logs', \
     'icon_path': '/opt/airflow/icons/airflow-scheduler.svg' \
+    } \
+    }, \
+    'vscode': { \
+    'command': ['code-server', '--auth', 'none', '--disable-telemetry', '--port', '{port}'], \
+    'timeout': 300, \
+    'absolute_url': True, \
+    'launcher_entry': { \
+    'title': 'VS Code', \
+    'icon_path': '/opt/airflow/icons/vscode.svg' \
     } \
     } \
     }" >> /root/.jupyter/jupyter_server_config.py

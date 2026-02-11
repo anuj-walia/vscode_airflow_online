@@ -4,4 +4,3 @@ apache-airflow-providers-sqlite
 jupyterlab
 jupyterhub
 jupyter-server-proxy
-jupyter-vscode-proxy
