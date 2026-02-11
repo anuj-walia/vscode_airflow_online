@@ -1,0 +1,62 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Airflow: Test Task",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/airflow_venv/bin/airflow",
+            "args": [
+                "tasks",
+                "test",
+                "${input:dagId}",
+                "${input:taskId}",
+                "${input:executionDate}"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Airflow: Test DAG (CLI)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/airflow_venv/bin/airflow",
+            "args": [
+                "dags",
+                "test",
+                "${input:dagId}",
+                "${input:executionDate}"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ],
+    "inputs": [
+        {
+            "id": "dagId",
+            "description": "DAG ID",
+            "type": "promptString",
+            "default": "my_first_dag"
+        },
+        {
+            "id": "taskId",
+            "description": "Task ID",
+            "type": "promptString",
+            "default": "python_task"
+        },
+        {
+            "id": "executionDate",
+            "description": "Execution Date (YYYY-MM-DD)",
+            "type": "promptString",
+            "default": "2026-01-01"
+        }
+    ]
+}
