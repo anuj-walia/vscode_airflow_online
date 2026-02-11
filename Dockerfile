@@ -41,8 +41,12 @@ ENV AIRFLOW__CORE__EXECUTOR=SequentialExecutor
 ENV AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
 ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
 
+# Create SVG icons for Jupyter launcher (icon_path requires SVG, not PNG)
+RUN mkdir -p /opt/airflow/icons && \
+    echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#017CEE"/><text x="32" y="42" text-anchor="middle" font-size="28" font-family="Arial" fill="white" font-weight="bold">A</text></svg>' > /opt/airflow/icons/airflow-webserver.svg && \
+    echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#4A4A4A"/><text x="32" y="42" text-anchor="middle" font-size="24" font-family="Arial" fill="#00D084" font-weight="bold">S</text></svg>' > /opt/airflow/icons/airflow-scheduler.svg
+
 # Configure Jupyter Server Proxy for Airflow Webserver and Scheduler
-# We append to the jupyter_server_config.py if it exists, or create it
 RUN mkdir -p /root/.jupyter && \
     echo "c.ServerProxy.servers = { \
     'airflow-webserver': { \
@@ -51,7 +55,7 @@ RUN mkdir -p /root/.jupyter && \
     'absolute_url': True, \
     'launcher_entry': { \
     'title': 'Airflow Webserver', \
-    'icon_path': '/opt/airflow_venv/lib/python3.11/site-packages/airflow/www/static/pin_100.png' \
+    'icon_path': '/opt/airflow/icons/airflow-webserver.svg' \
     } \
     }, \
     'airflow-scheduler': { \
@@ -61,7 +65,7 @@ RUN mkdir -p /root/.jupyter && \
     'timeout': 120, \
     'launcher_entry': { \
     'title': 'Airflow Scheduler Logs', \
-    'icon_path': '' \
+    'icon_path': '/opt/airflow/icons/airflow-scheduler.svg' \
     } \
     } \
     }" >> /root/.jupyter/jupyter_server_config.py
