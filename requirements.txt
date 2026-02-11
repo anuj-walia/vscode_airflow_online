@@ -1,4 +1,3 @@
 jupyterlab
 jupyterhub
 jupyter-server-proxy
-jupyter-vscode-proxy
