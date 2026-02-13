@@ -11,5 +11,5 @@ plugins/
 dags/__pycache__/
 # Ignore the virtual environment if created locally (though we use docker)
 venv/
-.vscode/
-!/.vscode/launch.json
+.idea
+

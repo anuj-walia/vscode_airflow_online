@@ -1,0 +1,60 @@
+# -----------------------------------------------------------
+# Reference: Airflow Workspace Pod (created programmatically by the launcher)
+# This file is NOT applied directly — it documents the pod structure.
+# -----------------------------------------------------------
+apiVersion: v1
+kind: Pod
+metadata:
+  name: airflow-workspace
+  namespace: airflow-dev
+  labels:
+    app: airflow-workspace
+    version: airflow2 # or airflow3
+spec:
+  restartPolicy: Always
+  containers:
+    - name: airflow
+      image: airflow-jupyter:airflow2 # or airflow-jupyter:airflow3
+      imagePullPolicy: Never
+      ports:
+        - containerPort: 8888
+      env:
+        - name: LOAD_EX
+          value: "n"
+        - name: EXECUTOR
+          value: "SequentialExecutor"
+      volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+        - name: logs
+          mountPath: /opt/airflow/logs
+        - name: plugins
+          mountPath: /opt/airflow/plugins
+  volumes:
+    - name: dags
+      hostPath:
+        path: /opt/airflow-shared/dags
+        type: DirectoryOrCreate
+    - name: logs
+      hostPath:
+        path: /opt/airflow-shared/logs
+        type: DirectoryOrCreate
+    - name: plugins
+      hostPath:
+        path: /opt/airflow-shared/plugins
+        type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-workspace-svc
+  namespace: airflow-dev
+spec:
+  type: NodePort
+  selector:
+    app: airflow-workspace
+  ports:
+    - port: 8888
+      targetPort: 8888
+      nodePort: 30088
+      name: jupyter

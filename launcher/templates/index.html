@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Airflow Dev Environment — Version Selector</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(ellipse at 20% 50%, rgba(1, 124, 238, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(0, 208, 132, 0.06) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 80%, rgba(99, 102, 241, 0.06) 0%, transparent 50%);
+            animation: bgShift 20s ease-in-out infinite alternate;
+            z-index: 0;
+        }
+
+        @keyframes bgShift {
+            0% {
+                transform: translate(0, 0) rotate(0deg);
+            }
+
+            100% {
+                transform: translate(-5%, 3%) rotate(3deg);
+            }
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            max-width: 520px;
+            padding: 20px;
+        }
+
+        .card {
+            background: rgba(22, 22, 35, 0.85);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 20px;
+            padding: 48px 40px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4),
+                0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+        }
+
+        .logo {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 24px;
+            background: linear-gradient(135deg, #017CEE, #00d084);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: 700;
+            color: #fff;
+            box-shadow: 0 8px 24px rgba(1, 124, 238, 0.3);
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 24px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
+        }
+
+        .subtitle {
+            text-align: center;
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 36px;
+            line-height: 1.5;
+        }
+
+        .version-options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 28px;
+        }
+
+        .version-card {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 16px 18px;
+            border: 1.5px solid rgba(255, 255, 255, 0.06);
+            border-radius: 14px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .version-card:hover {
+            border-color: rgba(1, 124, 238, 0.3);
+            background: rgba(1, 124, 238, 0.04);
+        }
+
+        .version-card.selected {
+            border-color: #017CEE;
+            background: rgba(1, 124, 238, 0.08);
+            box-shadow: 0 0 20px rgba(1, 124, 238, 0.1);
+        }
+
+        .version-card input[type="radio"] {
+            display: none;
+        }
+
+        .radio-dot {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.25s ease;
+        }
+
+        .version-card.selected .radio-dot {
+            border-color: #017CEE;
+        }
+
+        .radio-dot::after {
+            content: '';
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #017CEE;
+            transform: scale(0);
+            transition: transform 0.2s ease;
+        }
+
+        .version-card.selected .radio-dot::after {
+            transform: scale(1);
+        }
+
+        .version-info h3 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 2px;
+        }
+
+        .version-info p {
+            font-size: 12px;
+            color: #777;
+        }
+
+        .version-badge {
+            margin-left: auto;
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: 500;
+        }
+
+        .badge-stable {
+            background: rgba(0, 208, 132, 0.12);
+            color: #00d084;
+            border: 1px solid rgba(0, 208, 132, 0.2);
+        }
+
+        .badge-latest {
+            background: rgba(99, 102, 241, 0.12);
+            color: #818cf8;
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        }
+
+        .launch-btn {
+            width: 100%;
+            padding: 14px;
+            font-family: inherit;
+            font-size: 15px;
+            font-weight: 600;
+            color: #fff;
+            background: linear-gradient(135deg, #017CEE, #0066cc);
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            letter-spacing: 0.3px;
+        }
+
+        .launch-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 24px rgba(1, 124, 238, 0.35);
+        }
+
+        .launch-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .launch-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status-area {
+            margin-top: 20px;
+            text-align: center;
+            min-height: 48px;
+        }
+
+        .status-msg {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-size: 14px;
+            color: #aaa;
+            padding: 12px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .status-msg.visible {
+            display: flex;
+        }
+
+        .status-msg.error {
+            color: #ff6b7a;
+            background: rgba(220, 53, 69, 0.08);
+        }
+
+        .status-msg.success {
+            color: #00d084;
+            background: rgba(0, 208, 132, 0.08);
+        }
+
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #017CEE;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .running-banner {
+            margin-bottom: 24px;
+            padding: 14px 18px;
+            border-radius: 12px;
+            background: rgba(0, 208, 132, 0.06);
+            border: 1px solid rgba(0, 208, 132, 0.15);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .running-banner .info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .running-dot {
+            width: 8px;
+            height: 8px;
+            background: #00d084;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        .running-banner .label {
+            font-size: 13px;
+            color: #ccc;
+        }
+
+        .running-banner .label strong {
+            color: #00d084;
+        }
+
+        .open-link {
+            font-size: 13px;
+            color: #017CEE;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .open-link:hover {
+            color: #3399ff;
+        }
+
+        .stop-btn {
+            background: none;
+            border: 1px solid rgba(220, 53, 69, 0.3);
+            color: #ff6b7a;
+            padding: 5px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            font-family: inherit;
+            margin-left: 10px;
+            transition: all 0.2s;
+        }
+
+        .stop-btn:hover {
+            background: rgba(220, 53, 69, 0.1);
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 12px;
+            color: #555;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="logo">⚙</div>
+            <h1>Airflow Dev Environment</h1>
+            <p class="subtitle">Select an Airflow version to spin up your<br>JupyterLab + VS Code workspace</p>
+
+            {% if running and running.ready %}
+            <div class="running-banner">
+                <div class="info">
+                    <div class="running-dot"></div>
+                    <span class="label"><strong>{{ running.info.label }}</strong> is running</span>
+                </div>
+                <div>
+                    <a href="http://localhost:{{ nodeport }}" class="open-link">Open →</a>
+                    <button class="stop-btn" onclick="stopPod()">Stop</button>
+                </div>
+            </div>
+            {% endif %}
+
+            <form id="launchForm">
+                <div class="version-options">
+                    {% for key, ver in versions.items() %}
+                    <label class="version-card {% if loop.first %}selected{% endif %}" data-version="{{ key }}">
+                        <input type="radio" name="version" value="{{ key }}" {% if loop.first %}checked{% endif %}>
+                        <div class="radio-dot"></div>
+                        <div class="version-info">
+                            <h3>{{ ver.label }}</h3>
+                            <p>{{ ver.description }}</p>
+                        </div>
+                        {% if key == "airflow2" %}
+                        <span class="version-badge badge-stable">Stable</span>
+                        {% else %}
+                        <span class="version-badge badge-latest">Latest</span>
+                        {% endif %}
+                    </label>
+                    {% endfor %}
+                </div>
+
+                <button type="submit" class="launch-btn" id="launchBtn">Launch Environment</button>
+            </form>
+
+            <div class="status-area">
+                <div class="status-msg" id="statusMsg">
+                    <div class="spinner" id="statusSpinner"></div>
+                    <span id="statusText"></span>
+                </div>
+            </div>
+        </div>
+        <p class="footer">Kubernetes Pod Launcher · Docker Desktop</p>
+    </div>
+
+    <script>
+        document.querySelectorAll('.version-card').forEach(card => {
+            card.addEventListener('click', () => {
+                document.querySelectorAll('.version-card').forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+                card.querySelector('input[type="radio"]').checked = true;
+            });
+        });
+
+        const statusMsg = document.getElementById('statusMsg');
+        const statusText = document.getElementById('statusText');
+        const statusSpinner = document.getElementById('statusSpinner');
+        const launchBtn = document.getElementById('launchBtn');
+
+        function showStatus(text, type = 'loading') {
+            statusMsg.className = 'status-msg visible' + (type === 'error' ? ' error' : type === 'success' ? ' success' : '');
+            statusSpinner.style.display = type === 'loading' ? 'block' : 'none';
+            statusText.textContent = text;
+        }
+
+        let pollTimer = null;
+
+        function pollStatus() {
+            fetch('/status')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'ready') {
+                        clearInterval(pollTimer);
+                        showStatus('Environment ready! Redirecting...', 'success');
+                        launchBtn.disabled = false;
+                        setTimeout(() => { window.location.href = data.redirect_url; }, 1000);
+                    } else if (data.status === 'starting') {
+                        showStatus('Starting pod... (' + data.phase + ')');
+                    } else if (data.status === 'not_found') {
+                        showStatus('Pod not found', 'error');
+                        clearInterval(pollTimer);
+                        launchBtn.disabled = false;
+                    }
+                })
+                .catch(err => showStatus('Connection error: ' + err.message, 'error'));
+        }
+
+        document.getElementById('launchForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const version = document.querySelector('input[name="version"]:checked').value;
+            launchBtn.disabled = true;
+            showStatus('Requesting pod launch...');
+
+            fetch('/launch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'version=' + version
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'already_running') {
+                        showStatus('Already running! Redirecting...', 'success');
+                        setTimeout(() => { window.location.href = data.redirect_url; }, 800);
+                        return;
+                    }
+                    if (data.error) {
+                        showStatus(data.error, 'error');
+                        launchBtn.disabled = false;
+                        return;
+                    }
+                    showStatus(data.message);
+                    pollTimer = setInterval(pollStatus, 3000);
+                })
+                .catch(err => {
+                    showStatus('Request failed: ' + err.message, 'error');
+                    launchBtn.disabled = false;
+                });
+        });
+
+        function stopPod() {
+            if (!confirm('Stop the running Airflow environment?')) return;
+            fetch('/stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(() => window.location.reload())
+                .catch(err => alert('Error: ' + err.message));
+        }
+    </script>
+</body>
+
+</html>
