@@ -34,7 +34,6 @@ ENV AIRFLOW_HOME=/opt/airflow
 RUN mkdir -p $AIRFLOW_HOME
 
 # Airflow Configuration for Proxy
-ENV AIRFLOW__WEBSERVER__BASE_URL=http://localhost:8888/airflow-webserver
 ENV AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
 ENV AIRFLOW__CORE__EXECUTOR=SequentialExecutor
 ENV AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
@@ -52,7 +51,7 @@ RUN mkdir -p /root/.jupyter && \
     'airflow-webserver': { \
     'command': ['/opt/airflow_venv/bin/airflow', 'webserver', '--port', '{port}'], \
     'timeout': 120, \
-    'absolute_url': True, \
+    'absolute_url': False, \
     'launcher_entry': { \
     'title': 'Airflow Webserver', \
     'icon_path': '/opt/airflow/icons/airflow-webserver.svg' \
@@ -71,7 +70,7 @@ RUN mkdir -p /root/.jupyter && \
     'vscode': { \
     'command': ['code-server', '--auth', 'none', '--disable-telemetry', '--port', '{port}'], \
     'timeout': 300, \
-    'absolute_url': True, \
+    'absolute_url': False, \
     'launcher_entry': { \
     'title': 'VS Code', \
     'icon_path': '/opt/airflow/icons/vscode.svg' \
