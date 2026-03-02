@@ -21,7 +21,7 @@ COPY requirements.txt /tmp/requirements.txt
 
 # Install Python dependencies in the virtual environment
 RUN /opt/airflow_venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
-RUN /opt/airflow_venv/bin/pip install "apache-airflow==3.1.7" --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-3.1.3/constraints-3.11.txt"
+RUN /opt/airflow_venv/bin/pip install "apache-airflow==3.1.7" --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-3.1.7/constraints-3.11.txt"
 
 # Set up Airflow Home
 ENV AIRFLOW_HOME=/opt/airflow
