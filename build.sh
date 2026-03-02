@@ -5,7 +5,7 @@
 # Builds 3 images:
 #   1. airflow-jupyter:airflow2  (from main branch)
 #   2. airflow-jupyter:airflow3  (from airflow3 branch)
-#   3. airflow-launcher:latest   (from launcher/)
+#   3. airflow-hub:latest        (from hub/)
 # ---------------------------------------------------------------
 set -euo pipefail
 
@@ -75,23 +75,23 @@ echo "  ✓ airflow-jupyter:airflow3 built"
 echo ""
 
 # ---------------------------------------------------------------
-# 3. Switch back and build the launcher image
+# 3. Switch back and build the JupyterHub image
 # ---------------------------------------------------------------
 git checkout "$CURRENT_BRANCH" -q
 git stash pop -q 2>/dev/null || true
 
-echo "▸ Building airflow-launcher:latest..."
-docker build -t airflow-launcher:latest ./launcher/
-echo "  ✓ airflow-launcher:latest built"
+echo "▸ Building airflow-hub:latest (JupyterHub + KubeSpawner)..."
+docker build -t airflow-hub:latest ./hub/
+echo "  ✓ airflow-hub:latest built"
 echo ""
 
 echo "=============================================="
 echo "  All images built successfully!"
 echo ""
 echo "  Images:"
-echo "    • airflow-jupyter:airflow2"
-echo "    • airflow-jupyter:airflow3"
-echo "    • airflow-launcher:latest"
+echo "    • airflow-jupyter:airflow2  (Airflow 2.11.0)"
+echo "    • airflow-jupyter:airflow3  (Airflow 3.1.7)"
+echo "    • airflow-hub:latest        (JupyterHub)"
 echo ""
 echo "  Next: run ./deploy.sh"
 echo "=============================================="

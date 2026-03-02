@@ -1,17 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Airflow Dev Environment — Version Selector</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -24,6 +19,7 @@
             overflow: hidden;
         }
 
+        /* Animated gradient background */
         body::before {
             content: '';
             position: fixed;
@@ -32,20 +28,15 @@
             width: 200%;
             height: 200%;
             background: radial-gradient(ellipse at 20% 50%, rgba(1, 124, 238, 0.08) 0%, transparent 50%),
-                radial-gradient(ellipse at 80% 20%, rgba(0, 208, 132, 0.06) 0%, transparent 50%),
-                radial-gradient(ellipse at 50% 80%, rgba(99, 102, 241, 0.06) 0%, transparent 50%);
+                        radial-gradient(ellipse at 80% 20%, rgba(0, 208, 132, 0.06) 0%, transparent 50%),
+                        radial-gradient(ellipse at 50% 80%, rgba(99, 102, 241, 0.06) 0%, transparent 50%);
             animation: bgShift 20s ease-in-out infinite alternate;
             z-index: 0;
         }
 
         @keyframes bgShift {
-            0% {
-                transform: translate(0, 0) rotate(0deg);
-            }
-
-            100% {
-                transform: translate(-5%, 3%) rotate(3deg);
-            }
+            0% { transform: translate(0, 0) rotate(0deg); }
+            100% { transform: translate(-5%, 3%) rotate(3deg); }
         }
 
         .container {
@@ -63,9 +54,10 @@
             border-radius: 20px;
             padding: 48px 40px;
             box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4),
-                0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+                        0 0 0 1px rgba(255, 255, 255, 0.03) inset;
         }
 
+        /* Logo / Icon */
         .logo {
             width: 64px;
             height: 64px;
@@ -98,6 +90,7 @@
             line-height: 1.5;
         }
 
+        /* Version cards */
         .version-options {
             display: flex;
             flex-direction: column;
@@ -195,6 +188,7 @@
             border: 1px solid rgba(99, 102, 241, 0.2);
         }
 
+        /* Launch button */
         .launch-btn {
             width: 100%;
             padding: 14px;
@@ -208,6 +202,8 @@
             cursor: pointer;
             transition: all 0.3s ease;
             letter-spacing: 0.3px;
+            position: relative;
+            overflow: hidden;
         }
 
         .launch-btn:hover:not(:disabled) {
@@ -224,6 +220,7 @@
             cursor: not-allowed;
         }
 
+        /* Status area */
         .status-area {
             margin-top: 20px;
             text-align: center;
@@ -256,6 +253,7 @@
             background: rgba(0, 208, 132, 0.08);
         }
 
+        /* Spinner */
         .spinner {
             width: 18px;
             height: 18px;
@@ -266,11 +264,10 @@
         }
 
         @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
+            to { transform: rotate(360deg); }
         }
 
+        /* Running banner */
         .running-banner {
             margin-bottom: 24px;
             padding: 14px 18px;
@@ -297,15 +294,8 @@
         }
 
         @keyframes pulse {
-
-            0%,
-            100% {
-                opacity: 1;
-            }
-
-            50% {
-                opacity: 0.4;
-            }
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
         }
 
         .running-banner .label {
@@ -346,6 +336,7 @@
             background: rgba(220, 53, 69, 0.1);
         }
 
+        /* Footer */
         .footer {
             text-align: center;
             margin-top: 20px;
@@ -354,7 +345,6 @@
         }
     </style>
 </head>
-
 <body>
     <div class="container">
         <div class="card">
@@ -394,7 +384,9 @@
                     {% endfor %}
                 </div>
 
-                <button type="submit" class="launch-btn" id="launchBtn">Launch Environment</button>
+                <button type="submit" class="launch-btn" id="launchBtn">
+                    Launch Environment
+                </button>
             </form>
 
             <div class="status-area">
@@ -408,6 +400,7 @@
     </div>
 
     <script>
+        // Version card selection
         document.querySelectorAll('.version-card').forEach(card => {
             card.addEventListener('click', () => {
                 document.querySelectorAll('.version-card').forEach(c => c.classList.remove('selected'));
@@ -416,6 +409,7 @@
             });
         });
 
+        // Status display helpers
         const statusMsg = document.getElementById('statusMsg');
         const statusText = document.getElementById('statusText');
         const statusSpinner = document.getElementById('statusSpinner');
@@ -427,6 +421,11 @@
             statusText.textContent = text;
         }
 
+        function hideStatus() {
+            statusMsg.className = 'status-msg';
+        }
+
+        // Poll for pod readiness
         let pollTimer = null;
 
         function pollStatus() {
@@ -437,19 +436,24 @@
                         clearInterval(pollTimer);
                         showStatus('Environment ready! Redirecting...', 'success');
                         launchBtn.disabled = false;
-                        setTimeout(() => { window.location.href = data.redirect_url; }, 1000);
+                        setTimeout(() => {
+                            window.location.href = data.redirect_url;
+                        }, 1000);
                     } else if (data.status === 'starting') {
-                        showStatus('Starting pod... (' + data.phase + ')');
+                        showStatus(`Starting pod... (${data.phase})`);
                     } else if (data.status === 'not_found') {
-                        showStatus('Pod not found', 'error');
+                        showStatus('Pod not found — it may have been deleted', 'error');
                         clearInterval(pollTimer);
                         launchBtn.disabled = false;
                     }
                 })
-                .catch(err => showStatus('Connection error: ' + err.message, 'error'));
+                .catch(err => {
+                    showStatus('Connection error: ' + err.message, 'error');
+                });
         }
 
-        document.getElementById('launchForm').addEventListener('submit', function (e) {
+        // Launch form submit
+        document.getElementById('launchForm').addEventListener('submit', function(e) {
             e.preventDefault();
             const version = document.querySelector('input[name="version"]:checked').value;
             launchBtn.disabled = true;
@@ -460,27 +464,30 @@
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: 'version=' + version
             })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.status === 'already_running') {
-                        showStatus('Already running! Redirecting...', 'success');
-                        setTimeout(() => { window.location.href = data.redirect_url; }, 800);
-                        return;
-                    }
-                    if (data.error) {
-                        showStatus(data.error, 'error');
-                        launchBtn.disabled = false;
-                        return;
-                    }
-                    showStatus(data.message);
-                    pollTimer = setInterval(pollStatus, 3000);
-                })
-                .catch(err => {
-                    showStatus('Request failed: ' + err.message, 'error');
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'already_running') {
+                    showStatus('Already running! Redirecting...', 'success');
+                    setTimeout(() => {
+                        window.location.href = data.redirect_url;
+                    }, 800);
+                    return;
+                }
+                if (data.error) {
+                    showStatus(data.error, 'error');
                     launchBtn.disabled = false;
-                });
+                    return;
+                }
+                showStatus(data.message);
+                pollTimer = setInterval(pollStatus, 3000);
+            })
+            .catch(err => {
+                showStatus('Request failed: ' + err.message, 'error');
+                launchBtn.disabled = false;
+            });
         });
 
+        // Stop pod
         function stopPod() {
             if (!confirm('Stop the running Airflow environment?')) return;
             fetch('/stop', { method: 'POST' })
@@ -490,5 +497,4 @@
         }
     </script>
 </body>
-
 </html>

@@ -61,7 +61,7 @@ spec:
       containers:
         - name: launcher
           image: airflow-launcher:latest
-          imagePullPolicy: Never
+          imagePullPolicy: Never # local image
           ports:
             - containerPort: 5000
           env:
