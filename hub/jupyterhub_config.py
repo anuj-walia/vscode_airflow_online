@@ -16,7 +16,7 @@ c.JupyterHub.authenticator_class = "nativeauthenticator.NativeAuthenticator"
 c.NativeAuthenticator.open_signup = True
 
 # First registered user becomes admin
-c.NativeAuthenticator.admin_users = set()
+c.NativeAuthenticator.admin_users = {"anuj"}
 
 # Optionally set a minimum password length
 c.NativeAuthenticator.minimum_password_length = 4
