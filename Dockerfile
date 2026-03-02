@@ -45,7 +45,7 @@ RUN mkdir -p /root/.jupyter && \
     'airflow-api': { \
     'command': ['/opt/airflow_venv/bin/airflow', 'api-server', '--port', '{port}'], \
     'timeout': 120, \
-    'absolute_url': False, \
+    'absolute_url': True, \
     'launcher_entry': { \
     'title': 'Airflow API Server', \
     'icon_path': '/opt/airflow/icons/airflow-api.svg' \
