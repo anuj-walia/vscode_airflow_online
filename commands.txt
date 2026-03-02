@@ -1,0 +1,92 @@
+kubectl -n airflow-dev delete svc launcher-svc airflow-workspace-svc && kubectl -n airflow-dev delete deploy launcher 2>/dev/null; kubectl -n airflow-dev delete sa launcher-sa 2>/dev/null; kubectl -n airflow-dev delete role launcher-role 2>/dev/null; kubectl -n airflow-dev delete rolebinding launcher-rolebinding 2>/dev/null; echo "---Old resources cleaned---" && kubectl apply -f k8s/hub.yaml && echo "---Hub applied---" && kubectl -n airflow-dev get svc
+
+
+kubectl -n airflow-dev delete svc launcher-svc airflow-workspace-svc && kubectl -n airflow-dev delete deploy launcher 2>/dev/null; kubectl -n airflow-dev delete sa launcher-sa 2>/dev/null; kubectl -n airflow-dev delete role launcher-role 2>/dev/null; kubectl -n airflow-dev delete rolebinding launcher-rolebinding 2>/dev/null; echo "---Old resources cleaned---" && kubectl apply -f k8s/hub.yaml && echo "---Hub applied---" && kubectl -n airflow-dev get svc
+
+kubectl -n airflow-dev get pods && echo "---" && kubectl -n airflow-dev rollout status deployment/hub --timeout=60s
+
+kubectl -n airflow-dev logs deploy/hub --tail=50
+
+docker build -t airflow-hub:latest ./hub/ && echo "---Image rebuilt---" && kubectl apply -f k8s/hub.yaml && kubectl -n airflow-dev rollout restart deployment/hub && echo "---Restarted---"
+
+sleep 10 && kubectl -n airflow-dev get pods && echo "---LOGS---" && kubectl -n airflow-dev logs deploy/hub --tail=30
+
+kubectl -n airflow-dev get svc
+
+kubectl -n airflow-dev delete svc launcher-svc airflow-workspace-svc && kubectl -n airflow-dev delete deploy launcher 2>/dev/null; kubectl -n airflow-dev delete sa launcher-sa 2>/dev/null; kubectl -n airflow-dev delete role launcher-role 2>/dev/null; kubectl -n airflow-dev delete rolebinding launcher-rolebinding 2>/dev/null; echo "---Old resources cleaned---" && kubectl apply -f k8s/hub.yaml && echo "---Hub applied---" && kubectl -n airflow-dev get svc
+
+kubectl -n airflow-dev get pods && echo "---" && kubectl -n airflow-dev rollout status deployment/hub --timeout=60s
+
+kubectl -n airflow-dev get pods -o wide && echo "---" && kubectl -n airflow-dev get svc
+
+curl -s -o /dev/null -w "%{http_code}" http://localhost:30080/hub/login
+
+curl -s -o /dev/null -w "%{http_code}" http://localhost:30080/hub/login
+
+To check why i could not logiun to the 
+http://localhost:30080/user/anuj
+Jupyter Server
+404 : Not Found
+You are requesting a page that does not exist!
+
+kubectl -n airflow-dev get pods && echo "---" && kubectl -n airflow-dev logs -l app=jupyterhub-singleuser --tail=30 2>/dev/null; kubectl -n airflow-dev logs -l heritage=jupyterhub --tail=30 2>/dev/null; echo "---HUB LOGS---" && kubectl -n airflow-dev logs deploy/hub --tail=30
+
+kubectl -n airflow-dev get pods -l heritage=jupyterhub -o wide && echo "---" && kubectl -n airflow-dev describe pod -l heritage=jupyterhub 2>/dev/null | grep -A5 "Environment:" | head -20
+
+Now I can see the issue clearly. KubeSpawner correctly sets JUPYTERHUB_SERVICE_URL = http://0.0.0.0:8888/user/anuj/, which means JupyterLab should start with base_url=/user/anuj/. However, our Airflow image's 
+entrypoint.sh
+ starts JupyterLab without reading the JUPYTERHUB_SERVICE_PREFIX env var — it starts at /.
+
+The fix needs to happen in the Airflow images' 
+entrypoint.sh
+. JupyterLab respects JUPYTERHUB_SERVICE_PREFIX natively when started by jupyterhub-singleuser instead of plain jupyter lab. Let me check the current entrypoint:
+
+Analyzed
+entrypoint.sh#L1-25
+There's the problem. Line 24 starts JupyterLab with jupyter lab directly, which ignores JUPYTERHUB_SERVICE_PREFIX. When spawned by JupyterHub, the image needs to use jupyterhub-singleuser instead. But we can't modify the 
+entrypoint.sh
+ on main/airflow3 branches (they must stay untouched).
+
+The solution: override the command in KubeSpawner to start jupyterhub-singleuser instead of the default entrypoint. This way, the Airflow images don't need modification:
+
+3
+docker build -t airflow-hub:latest ./hub/ && kubectl -n airflow-dev delete pod jupyter-anuj --force 2>/dev/null; kubectl -n airflow-dev rollout restart deployment/hub && echo "---Rebuilt and restarted---"
+
+sleep 15 && kubectl -n airflow-dev get pods && echo "---LOGS---" && kubectl -n airflow-dev logs deploy/hub --tail=10
+
+
+Now I can see the critical clue. The user pod logs show:
+
+Serving notebooks from local directory: /opt/airflow
+http://jupyter-anuj:8888/lab
+docker inspect airflow-jupyter:airflow2 --format='{{json .Config.Entrypoint}}:::{{json .Config.Cmd}}'
+Confirmed — the image uses ENTRYPOINT ["/opt/airflow/entrypoint.sh"] with no CMD. KubeSpawner's cmd sets the Kubernetes container command field, which does override Docker ENTRYPOINT. But the entrypoint.sh is still running, which means it's being called as the command, and then it runs exec jupyter lab.
+
+Wait — actually, looking at the logs again, Starting JupyterLab... is the echo from 
+entrypoint.sh
+. The lifecycle postStart hook runs the entrypoint in parallel. Let me re-check: KubeSpawner sets command: ["jupyterhub-singleuser"] in the pod spec, that should override ENTRYPOINT. Let me verify what the actual pod spec looks like:
+kubectl -n airflow-dev get pod jupyter-anuj -o jsonpath='{.spec.containers[0].command}' && echo "" && echo "---ARGS---" && kubectl -n airflow-dev get pod jupyter-anuj -o jsonpath='{.spec.containers[0].args}' && echo ""
+
+docker build -t airflow-hub:latest ./hub/ && kubectl -n airflow-dev delete pod jupyter-anuj --force 2>/dev/null; kubectl -n airflow-dev rollout restart deployment/hub && echo "---Done---"
+
+sleep 15 && kubectl -n airflow-dev get pods && echo "---HUB---" && kubectl -n airflow-dev logs deploy/hub --tail=5
+
+kubectl -n airflow-dev get pods && echo "---AF3 POD LOGS---" && kubectl -n airflow-dev logs jupyter-testaf3 --tail=40 2>/dev/null && echo "---DESCRIBE---" && kubectl -n airflow-dev describe pod jupyter-testaf3 2>/dev/null | tail -20
+
+kubectl -n airflow-dev get pods --show-all 2>/dev/null || kubectl -n airflow-dev get pods -A 2>/dev/null | grep airflow && echo "---EVENTS---" && kubectl -n airflow-dev get events --sort-by='.lastTimestamp' | grep -i "testaf3" | tail -10
+
+
+docker run --rm airflow-jupyter:airflow3 /bin/bash -c "source /opt/airflow_venv/bin/activate && airflow version && which jupyterhub-singleuser && airflow db init" 2>&1 | tail -20
+
+
+docker run --rm airflow-jupyter:airflow3 /bin/bash -c "source /opt/airflow_venv/bin/activate && airflow version" 2>&1
+
+docker run --rm --entrypoint /bin/bash airflow-jupyter:airflow3 -c "source /opt/airflow_venv/bin/activate && which jupyterhub-singleuser 2>/dev/null && jupyterhub-singleuser --version 2>/dev/null || echo 'NOT FOUND'" 2>&1
+
+
+docker run --rm --entrypoint /bin/bash airflow-jupyter:airflow2 -c "source /opt/airflow_venv/bin/activate && which jupyterhub-singleuser 2>/dev/null && jupyterhub-singleuser --version 2>/dev/null || echo 'NOT FOUND'" 2>&1
+
+docker run --rm --entrypoint /bin/bash airflow-jupyter:airflow2 -c "source /opt/airflow_venv/bin/activate && which jupyterhub-singleuser 2>/dev/null && jupyterhub-singleuser --version 2>/dev/null || echo 'NOT FOUND'" 2>&1
+
+docker run --rm --entrypoint /bin/bash airflow-jupyter:airflow3 -c "source /opt/airflow_venv/bin/activate && if [ ! -f /opt/airflow/airflow.db ]; then airflow db init && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin; fi && echo 'DB INIT DONE' && jupyterhub-singleuser --allow-root --ip=0.0.0.0 --port=8888 --ServerApp.root_dir=/opt/airflow 2>&1 | head -20"
+
