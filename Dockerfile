@@ -1,63 +1,49 @@
 # =============================================================================
-# Unified Airflow + JupyterLab Dockerfile
+# Single Unified Airflow + JupyterLab Docker Image
 #
-# Supports both Airflow 2.x and 3.x via build args.
-# Usage:
-#   docker build --build-arg AIRFLOW_VERSION=2.11.0 --build-arg PYTHON_VERSION=3.11 \
-#                -t airflow-jupyter:2.11.0-py3.11 .
+# This image does NOT include Apache Airflow at build time.
+# Airflow is installed at first pod startup based on user-selected
+# AIRFLOW_VERSION and PYTHON_VERSION env vars (set by JupyterHub).
+# The PVC caches the installation so subsequent starts are instant.
+#
+# Build:  docker build -t airflow-jupyter:latest .
 # =============================================================================
 
-ARG PYTHON_VERSION=3.11
-FROM python:${PYTHON_VERSION}-slim
+FROM ubuntu:22.04
 
-# Re-declare ARGs after FROM (they're reset)
-ARG AIRFLOW_VERSION=2.11.0
-ARG PYTHON_VERSION=3.11
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Persist versions as env vars for runtime detection
-ENV AIRFLOW_VERSION=${AIRFLOW_VERSION}
-ENV PYTHON_VERSION=${PYTHON_VERSION}
-
-# ---- System Dependencies (including git for repo integration) ----
-RUN apt-get update && apt-get install -y \
+# ---- Install Multiple Python Versions via deadsnakes PPA ----
+RUN apt-get update && \
+    apt-get install -y software-properties-common && \
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y \
+    python3.9 python3.9-venv python3.9-dev \
+    python3.10 python3.10-venv python3.10-dev \
+    python3.11 python3.11-venv python3.11-dev \
+    python3.12 python3.12-venv python3.12-dev \
     git \
     curl \
-    nodejs \
-    npm \
+    wget \
     build-essential \
     libsqlite3-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# ---- Code Server (VS Code in browser) ----
+# ---- Install Node.js (for code-server) ----
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# ---- Install Code Server (VS Code in browser) ----
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
-# ---- Python Virtual Environment ----
-RUN python -m venv /opt/airflow_venv
-
-# ---- Jupyter Packages ----
-COPY requirements.txt /tmp/requirements.txt
-RUN /opt/airflow_venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
-
-# ---- Install Apache Airflow (version-specific with constraints) ----
-RUN /opt/airflow_venv/bin/pip install --no-cache-dir \
-    "apache-airflow==${AIRFLOW_VERSION}" \
-    --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"
-
-# ---- Airflow Home ----
-ENV AIRFLOW_HOME=/opt/airflow
-RUN mkdir -p $AIRFLOW_HOME
-
-# ---- Common Airflow env vars ----
-ENV AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
-ENV AIRFLOW__CORE__EXECUTOR=SequentialExecutor
-ENV AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
-ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
-
-# ---- SVG Icons for Jupyter Launcher ----
-RUN mkdir -p /opt/airflow/icons && \
-    echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#017CEE"/><text x="32" y="42" text-anchor="middle" font-size="28" font-family="Arial" fill="white" font-weight="bold">A</text></svg>' > /opt/airflow/icons/airflow.svg && \
-    echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#4A4A4A"/><text x="32" y="42" text-anchor="middle" font-size="24" font-family="Arial" fill="#00D084" font-weight="bold">S</text></svg>' > /opt/airflow/icons/airflow-scheduler.svg && \
-    echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#0078D7"/><text x="32" y="44" text-anchor="middle" font-size="26" font-family="Arial" fill="white" font-weight="bold">VS</text></svg>' > /opt/airflow/icons/vscode.svg
+# ---- Jupyter Virtual Environment (uses Python 3.11 — stable for Jupyter) ----
+RUN python3.11 -m venv /opt/jupyter_venv
+RUN /opt/jupyter_venv/bin/pip install --no-cache-dir \
+    jupyterlab \
+    jupyterhub \
+    jupyter-server-proxy
 
 # ---- VS Code Extensions ----
 RUN code-server --install-extension ms-python.python \
@@ -66,24 +52,35 @@ RUN code-server --install-extension ms-python.python \
 
 # ---- VS Code Default Python Interpreter ----
 RUN mkdir -p /root/.local/share/code-server/User && \
-    echo '{ "python.defaultInterpreterPath": "/opt/airflow_venv/bin/python" }' > /root/.local/share/code-server/User/settings.json
+    echo '{ "python.defaultInterpreterPath": "/opt/airflow/venv/bin/python" }' \
+    > /root/.local/share/code-server/User/settings.json
+
+# ---- Airflow Home (will be overlaid by PVC mount) ----
+ENV AIRFLOW_HOME=/opt/airflow
+RUN mkdir -p $AIRFLOW_HOME
+
+# ---- Common env vars ----
+ENV AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
+ENV AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+ENV AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
+ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
 
 # ---- Copy scripts to a path NOT hidden by PVC mount ----
 COPY entrypoint.sh /opt/airflow-scripts/entrypoint.sh
 COPY scheduler_wrapper.py /opt/airflow-scripts/scheduler_wrapper.py
-RUN mkdir -p /opt/airflow/.vscode
+RUN mkdir -p /opt/airflow-scripts/.vscode
 COPY .vscode /opt/airflow-scripts/.vscode
 
 RUN chmod +x /opt/airflow-scripts/entrypoint.sh
+
+# ---- Default PATH: Jupyter venv first ----
+ENV PATH="/opt/jupyter_venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # ---- Working Directory ----
 WORKDIR $AIRFLOW_HOME
 
 # ---- Expose Ports ----
 EXPOSE 8888 8080 9091 8999
-
-# ---- Default PATH includes venv ----
-ENV PATH="/opt/airflow_venv/bin:$PATH"
 
 # ---- Entrypoint ----
 ENTRYPOINT ["/opt/airflow-scripts/entrypoint.sh"]
