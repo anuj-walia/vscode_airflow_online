@@ -28,9 +28,7 @@ ENV AIRFLOW_HOME=/opt/airflow
 RUN mkdir -p $AIRFLOW_HOME
 
 # Airflow 3.x Configuration for Proxy
-ENV AIRFLOW__WEBSERVER__BASE_URL=http://localhost:8888/airflow-webserver
 ENV AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
-ENV AIRFLOW__API__BASE_URL=http://localhost:8888/airflow-api
 ENV AIRFLOW__CORE__EXECUTOR=SequentialExecutor
 ENV AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
 ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
@@ -47,7 +45,7 @@ RUN mkdir -p /root/.jupyter && \
     'airflow-api': { \
     'command': ['/opt/airflow_venv/bin/airflow', 'api-server', '--port', '{port}'], \
     'timeout': 120, \
-    'absolute_url': True, \
+    'absolute_url': False, \
     'launcher_entry': { \
     'title': 'Airflow API Server', \
     'icon_path': '/opt/airflow/icons/airflow-api.svg' \
@@ -66,7 +64,7 @@ RUN mkdir -p /root/.jupyter && \
     'vscode': { \
     'command': ['code-server', '--auth', 'none', '--disable-telemetry', '--port', '{port}'], \
     'timeout': 300, \
-    'absolute_url': True, \
+    'absolute_url': False, \
     'launcher_entry': { \
     'title': 'VS Code', \
     'icon_path': '/opt/airflow/icons/vscode.svg' \
