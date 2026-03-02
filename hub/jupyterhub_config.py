@@ -83,6 +83,7 @@ c.KubeSpawner.extra_container_config = {
         "    --role Admin --email admin@example.com --password admin "
         "    2>/dev/null || true); "
         "fi && "
+        "echo '{\"admin\": \"admin\"}' > /opt/airflow/simple_auth_manager_passwords.json.generated && "
         "export AIRFLOW__API__BASE_URL=http://localhost:8888${JUPYTERHUB_SERVICE_PREFIX}airflow-api && "
         "exec jupyterhub-singleuser "
         "  --allow-root "
