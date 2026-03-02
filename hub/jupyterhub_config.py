@@ -1,11 +1,29 @@
 """
 JupyterHub Configuration — Multi-User Airflow Dev Environment
 
-Uses KubeSpawner to create per-user pods with a profile picker
-(Airflow 2 or Airflow 3). Includes idle culling after 30 minutes.
+Uses KubeSpawner with profile_options to let users select Airflow version
+and Python version from dropdowns. Per-user PVCs persist workspace/database.
 """
 
 import os
+
+# =============================================================================
+# Supported Versions — Must match build.sh VERSIONS array
+# =============================================================================
+SUPPORTED_VERSIONS = [
+    {"airflow": "2.10.5", "python": "3.11"},
+    {"airflow": "2.11.0", "python": "3.11"},
+    {"airflow": "3.0.1",  "python": "3.11"},
+    {"airflow": "3.1.7",  "python": "3.11"},
+    {"airflow": "3.1.7",  "python": "3.12"},
+]
+
+# Build lookup: (airflow_ver, python_ver) -> True
+VALID_COMBOS = {(v["airflow"], v["python"]) for v in SUPPORTED_VERSIONS}
+
+# Unique lists for dropdowns
+AIRFLOW_VERSIONS = sorted(set(v["airflow"] for v in SUPPORTED_VERSIONS))
+PYTHON_VERSIONS = sorted(set(v["python"] for v in SUPPORTED_VERSIONS))
 
 # =============================================================================
 # Authentication — NativeAuthenticator (self-registration)
@@ -15,7 +33,7 @@ c.JupyterHub.authenticator_class = "nativeauthenticator.NativeAuthenticator"
 # Allow users to self-register (sign-up page)
 c.NativeAuthenticator.open_signup = True
 
-# First registered user becomes admin
+# Static admin user
 c.NativeAuthenticator.admin_users = {"anuj"}
 
 # Optionally set a minimum password length
@@ -25,7 +43,7 @@ c.NativeAuthenticator.minimum_password_length = 4
 c.Authenticator.allow_all = True
 
 # =============================================================================
-# Spawner — KubeSpawner with Profile List
+# Spawner — KubeSpawner with Version Dropdowns
 # =============================================================================
 c.JupyterHub.spawner_class = "kubespawner.KubeSpawner"
 
@@ -35,69 +53,95 @@ c.KubeSpawner.namespace = os.environ.get("K8S_NAMESPACE", "airflow-dev")
 # Use local images only (no registry pull)
 c.KubeSpawner.image_pull_policy = "Never"
 
-# Profile list — users choose Airflow version at spawn time
+# --- Profile with dropdown options ---
+# Build Airflow version choices
+airflow_choices = {}
+for ver in AIRFLOW_VERSIONS:
+    major = ver.split(".")[0]
+    label = f"Airflow {ver}"
+    if ver == "2.11.0":
+        label += " (Stable)"
+    elif ver == "3.1.7":
+        label += " (Latest)"
+    airflow_choices[ver] = {
+        "display_name": label,
+        **({"default": True} if ver == "2.11.0" else {}),
+    }
+
+# Build Python version choices
+python_choices = {}
+for ver in PYTHON_VERSIONS:
+    python_choices[ver] = {
+        "display_name": f"Python {ver}",
+        **({"default": True} if ver == "3.11" else {}),
+    }
+
 c.KubeSpawner.profile_list = [
     {
-        "display_name": "Airflow 2.11.0 (Stable)",
-        "slug": "airflow2",
-        "description": "Apache Airflow 2.x with Webserver UI, JupyterLab, and VS Code",
-        "kubespawner_override": {
-            "image": "airflow-jupyter:airflow2",
-        },
-    },
-    {
-        "display_name": "Airflow 3.1.7 (Latest)",
-        "slug": "airflow3",
-        "description": "Apache Airflow 3.x with API Server UI, JupyterLab, and VS Code",
-        "kubespawner_override": {
-            "image": "airflow-jupyter:airflow3",
+        "display_name": "Airflow Dev Environment",
+        "slug": "airflow",
+        "description": "Apache Airflow with JupyterLab, VS Code, and Scheduler",
+        "profile_options": {
+            "airflow_version": {
+                "display_name": "Airflow Version",
+                "choices": airflow_choices,
+            },
+            "python_version": {
+                "display_name": "Python Version",
+                "choices": python_choices,
+            },
         },
     },
 ]
 
 # Default image (fallback)
-c.KubeSpawner.image = "airflow-jupyter:airflow2"
+c.KubeSpawner.image = "airflow-jupyter:2.11.0-py3.11"
+
+# --- Pre-spawn hook: construct image tag from selections ---
+async def pre_spawn_hook(spawner):
+    """Construct the Docker image tag from the selected version options."""
+    options = spawner.user_options
+
+    af_ver = options.get("profile--airflow_version", "2.11.0")
+    py_ver = options.get("profile--python_version", "3.11")
+
+    # Validate combo exists
+    if (af_ver, py_ver) not in VALID_COMBOS:
+        # Fall back to nearest valid combo for this Airflow version
+        valid_py = [v["python"] for v in SUPPORTED_VERSIONS if v["airflow"] == af_ver]
+        if valid_py:
+            py_ver = valid_py[0]
+            spawner.log.warning(
+                f"Invalid combo {af_ver}/py{py_ver}, falling back to {af_ver}/py{valid_py[0]}"
+            )
+        else:
+            af_ver, py_ver = "2.11.0", "3.11"
+            spawner.log.warning(f"Invalid combo, using default 2.11.0/py3.11")
+
+    image = f"airflow-jupyter:{af_ver}-py{py_ver}"
+    spawner.image = image
+    spawner.log.info(f"Selected image: {image}")
+
+    # Pass version info as env vars to the pod
+    spawner.environment["AIRFLOW_VERSION"] = af_ver
+    spawner.environment["PYTHON_VERSION"] = py_ver
+
+c.KubeSpawner.pre_spawn_hook = pre_spawn_hook
 
 # Container port — JupyterLab runs on 8888 inside the Airflow images
 c.KubeSpawner.port = 8888
 
-# Override the Docker ENTRYPOINT via extra_container_config.
-# KubeSpawner.cmd maps to K8s "args" (which overrides Docker CMD),
-# but our Airflow images use ENTRYPOINT, not CMD. To override ENTRYPOINT,
-# we must set the K8s "command" field directly via extra_container_config.
-#
-# This shell script:
-#   1. Activates the Python venv (where Airflow + JupyterLab are installed)
-#   2. Initializes the Airflow DB and creates admin user (if first run)
-#   3. Starts jupyterhub-singleuser (which respects JUPYTERHUB_SERVICE_PREFIX
-#      so JupyterLab serves at /user/{name}/ instead of /)
+# --- Startup command: use the smart entrypoint ---
+# The Dockerfile's ENTRYPOINT is /opt/airflow-scripts/entrypoint.sh
+# which handles all version-specific initialization.
+# We override it here to ensure it runs correctly under JupyterHub.
 c.KubeSpawner.cmd = []  # Clear default cmd
 c.KubeSpawner.extra_container_config = {
-    "command": [
-        "/bin/bash", "-c",
-        "source /opt/airflow_venv/bin/activate && "
-        "if [ ! -f /opt/airflow/airflow.db ]; then "
-        "  (airflow db init 2>/dev/null || airflow db migrate) && "
-        "  (airflow users create "
-        "    --username admin --firstname Admin --lastname User "
-        "    --role Admin --email admin@example.com --password admin "
-        "    2>/dev/null || true); "
-        "fi && "
-        "echo '{\"admin\": \"admin\"}' > /opt/airflow/simple_auth_manager_passwords.json.generated && "
-        "export AIRFLOW__API__BASE_URL=http://localhost:8888${JUPYTERHUB_SERVICE_PREFIX}airflow-api && "
-        "exec jupyterhub-singleuser "
-        "  --allow-root "
-        "  --ip=0.0.0.0 "
-        "  --port=8888 "
-        "  --NotebookApp.token='' "
-        "  --ServerApp.root_dir=/opt/airflow"
-    ],
+    "command": ["/opt/airflow-scripts/entrypoint.sh"],
 }
 
 # Environment variables passed to user pods
 c.KubeSpawner.environment = {
-    "LOAD_EX": "n",
-    "EXECUTOR": "SequentialExecutor",
     "PATH": "/opt/airflow_venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 }
 
@@ -107,28 +151,18 @@ c.KubeSpawner.cpu_guarantee = 0.5
 c.KubeSpawner.mem_limit = "4G"
 c.KubeSpawner.mem_guarantee = "1G"
 
-# Volume mounts for shared DAGs, logs, plugins
-# Each user gets their own subdirectory under the shared paths
-c.KubeSpawner.volumes = [
-    {
-        "name": "dags",
-        "hostPath": {"path": "/opt/airflow-shared/dags", "type": "DirectoryOrCreate"},
-    },
-    {
-        "name": "logs",
-        "hostPath": {"path": "/opt/airflow-shared/logs", "type": "DirectoryOrCreate"},
-    },
-    {
-        "name": "plugins",
-        "hostPath": {"path": "/opt/airflow-shared/plugins", "type": "DirectoryOrCreate"},
-    },
-]
+# =============================================================================
+# Per-User PVC — Persistent Workspace & Database
+# =============================================================================
+c.KubeSpawner.storage_pvc_ensure = True
+c.KubeSpawner.storage_capacity = "5Gi"
+c.KubeSpawner.storage_access_modes = ["ReadWriteOnce"]
 
-c.KubeSpawner.volume_mounts = [
-    {"name": "dags", "mountPath": "/opt/airflow/dags"},
-    {"name": "logs", "mountPath": "/opt/airflow/logs"},
-    {"name": "plugins", "mountPath": "/opt/airflow/plugins"},
-]
+# PVC name template: claim-{username}
+c.KubeSpawner.storage_pvc_name_template = "claim-{username}"
+
+# Mount the PVC at AIRFLOW_HOME so workspace, DB, DAGs, logs all persist
+c.KubeSpawner.storage_mount_path = "/opt/airflow"
 
 # Pod startup timeout (Airflow images are large, may take time)
 c.KubeSpawner.start_timeout = 300
@@ -175,22 +209,20 @@ c.JupyterHub.ip = "0.0.0.0"
 c.JupyterHub.port = 8000
 
 # Bind the Hub API (internal) to 0.0.0.0:8081
-# This is where the proxy and spawned pods connect to the Hub
 c.JupyterHub.hub_bind_url = "http://0.0.0.0:8081"
 
 # URL that spawned user pods use to reach the Hub API
-# Uses the K8s service DNS name so pods can find the hub
 c.JupyterHub.hub_connect_url = os.environ.get(
     "HUB_CONNECT_URL", "http://hub-svc.airflow-dev.svc.cluster.local:8081"
 )
 
-# Allow named servers (users can run multiple environments)
+# Single server per user
 c.JupyterHub.allow_named_servers = False
 
 # Database for user state (mounted via PVC in K8s)
 c.JupyterHub.db_url = "sqlite:////srv/jupyterhub/data/jupyterhub.sqlite"
 
-# Shutdown user pods when hub restarts
+# Keep user pods when hub restarts
 c.JupyterHub.cleanup_servers = False
 
 # Logging

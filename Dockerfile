@@ -1,6 +1,24 @@
-FROM python:3.11-slim
+# =============================================================================
+# Unified Airflow + JupyterLab Dockerfile
+#
+# Supports both Airflow 2.x and 3.x via build args.
+# Usage:
+#   docker build --build-arg AIRFLOW_VERSION=2.11.0 --build-arg PYTHON_VERSION=3.11 \
+#                -t airflow-jupyter:2.11.0-py3.11 .
+# =============================================================================
 
-# Install system dependencies
+ARG PYTHON_VERSION=3.11
+FROM python:${PYTHON_VERSION}-slim
+
+# Re-declare ARGs after FROM (they're reset)
+ARG AIRFLOW_VERSION=2.11.0
+ARG PYTHON_VERSION=3.11
+
+# Persist versions as env vars for runtime detection
+ENV AIRFLOW_VERSION=${AIRFLOW_VERSION}
+ENV PYTHON_VERSION=${PYTHON_VERSION}
+
+# ---- System Dependencies (including git for repo integration) ----
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -10,100 +28,62 @@ RUN apt-get update && apt-get install -y \
     libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Code Server (VS Code)
+# ---- Code Server (VS Code in browser) ----
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
-# Create virtual environment for Airflow
+# ---- Python Virtual Environment ----
 RUN python -m venv /opt/airflow_venv
 
-# Copy requirements
+# ---- Jupyter Packages ----
 COPY requirements.txt /tmp/requirements.txt
-
-# Install Python dependencies in the virtual environment
 RUN /opt/airflow_venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
 
-# Install Jupyter and proxies in the base environment (or venv, but user asked for venv to be default)
-# We'll install jupyter in the venv as well so it has access to airflow libs
+# ---- Install Apache Airflow (version-specific with constraints) ----
 RUN /opt/airflow_venv/bin/pip install --no-cache-dir \
-    jupyterlab \
-    jupyterhub \
-    jupyter-server-proxy
+    "apache-airflow==${AIRFLOW_VERSION}" \
+    --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"
 
-# Set up Airflow Home
+# ---- Airflow Home ----
 ENV AIRFLOW_HOME=/opt/airflow
 RUN mkdir -p $AIRFLOW_HOME
 
-# Airflow Configuration for Proxy
-ENV AIRFLOW__WEBSERVER__BASE_URL=http://localhost:8888/airflow-webserver
+# ---- Common Airflow env vars ----
 ENV AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
 ENV AIRFLOW__CORE__EXECUTOR=SequentialExecutor
 ENV AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
 ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
 
-# Create SVG icons for Jupyter launcher (icon_path requires SVG, not PNG)
+# ---- SVG Icons for Jupyter Launcher ----
 RUN mkdir -p /opt/airflow/icons && \
-    echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#017CEE"/><text x="32" y="42" text-anchor="middle" font-size="28" font-family="Arial" fill="white" font-weight="bold">A</text></svg>' > /opt/airflow/icons/airflow-webserver.svg && \
+    echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#017CEE"/><text x="32" y="42" text-anchor="middle" font-size="28" font-family="Arial" fill="white" font-weight="bold">A</text></svg>' > /opt/airflow/icons/airflow.svg && \
     echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#4A4A4A"/><text x="32" y="42" text-anchor="middle" font-size="24" font-family="Arial" fill="#00D084" font-weight="bold">S</text></svg>' > /opt/airflow/icons/airflow-scheduler.svg && \
     echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#0078D7"/><text x="32" y="44" text-anchor="middle" font-size="26" font-family="Arial" fill="white" font-weight="bold">VS</text></svg>' > /opt/airflow/icons/vscode.svg
 
-# Configure Jupyter Server Proxy for Airflow Webserver, Scheduler, and VS Code
-RUN mkdir -p /root/.jupyter && \
-    echo "c.ServerProxy.servers = { \
-    'airflow-webserver': { \
-    'command': ['/opt/airflow_venv/bin/airflow', 'webserver', '--port', '{port}'], \
-    'timeout': 120, \
-    'absolute_url': True, \
-    'launcher_entry': { \
-    'title': 'Airflow Webserver', \
-    'icon_path': '/opt/airflow/icons/airflow-webserver.svg' \
-    } \
-    }, \
-    'airflow-scheduler': { \
-    'command': ['/opt/airflow_venv/bin/python', '/opt/airflow/scheduler_wrapper.py'], \
-    'absolute_url': False, \
-    'port': 8999, \
-    'timeout': 120, \
-    'launcher_entry': { \
-    'title': 'Airflow Scheduler Logs', \
-    'icon_path': '/opt/airflow/icons/airflow-scheduler.svg' \
-    } \
-    }, \
-    'vscode': { \
-    'command': ['code-server', '--auth', 'none', '--disable-telemetry', '--port', '{port}'], \
-    'timeout': 300, \
-    'absolute_url': True, \
-    'launcher_entry': { \
-    'title': 'VS Code', \
-    'icon_path': '/opt/airflow/icons/vscode.svg' \
-    } \
-    } \
-    }" >> /root/.jupyter/jupyter_server_config.py
-
-# Install VS Code Extensions
+# ---- VS Code Extensions ----
 RUN code-server --install-extension ms-python.python \
     && code-server --install-extension redhat.vscode-yaml \
     && code-server --install-extension janisdd.vscode-edit-csv
 
-# Configure VS Code Default Python Interpreter
+# ---- VS Code Default Python Interpreter ----
 RUN mkdir -p /root/.local/share/code-server/User && \
     echo '{ "python.defaultInterpreterPath": "/opt/airflow_venv/bin/python" }' > /root/.local/share/code-server/User/settings.json
 
-# Copy scripts
-COPY entrypoint.sh /opt/airflow/entrypoint.sh
-COPY scheduler_wrapper.py /opt/airflow/scheduler_wrapper.py
-COPY .vscode /opt/airflow/.vscode
+# ---- Copy scripts to a path NOT hidden by PVC mount ----
+COPY entrypoint.sh /opt/airflow-scripts/entrypoint.sh
+COPY scheduler_wrapper.py /opt/airflow-scripts/scheduler_wrapper.py
+RUN mkdir -p /opt/airflow/.vscode
+COPY .vscode /opt/airflow-scripts/.vscode
 
-# Make scripts executable
-RUN chmod +x /opt/airflow/entrypoint.sh
+RUN chmod +x /opt/airflow-scripts/entrypoint.sh
 
-# Set working directory
+# ---- Working Directory ----
 WORKDIR $AIRFLOW_HOME
 
-# Expose ports
-EXPOSE 8888 8080 8999
+# ---- Expose Ports ----
+EXPOSE 8888 8080 9091 8999
 
-# Set default shell to use the venv
+# ---- Default PATH includes venv ----
 ENV PATH="/opt/airflow_venv/bin:$PATH"
 
-# Entrypoint
-ENTRYPOINT ["/opt/airflow/entrypoint.sh"]
+# ---- Entrypoint ----
+ENTRYPOINT ["/opt/airflow-scripts/entrypoint.sh"]

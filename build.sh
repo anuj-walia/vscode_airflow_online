@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
-# ---------------------------------------------------------------
-# build.sh — Build all Docker images for the Kubernetes deployment
+# =============================================================================
+# build.sh — Build Docker images for all supported Airflow + Python combos
 #
-# Builds 3 images:
-#   1. airflow-jupyter:airflow2  (from main branch)
-#   2. airflow-jupyter:airflow3  (from airflow3 branch)
-#   3. airflow-hub:latest        (from hub/)
-# ---------------------------------------------------------------
+# Builds images from the unified Dockerfile using build args.
+# Each combo produces: airflow-jupyter:{airflow_version}-py{python_version}
+# Also builds the JupyterHub image: airflow-hub:latest
+# =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-CURRENT_BRANCH=$(git branch --show-current)
+# =============================================================================
+# Supported Version Combos — Add new entries here
+# Format: "AIRFLOW_VERSION:PYTHON_VERSION"
+# =============================================================================
+VERSIONS=(
+    "2.10.5:3.11"
+    "2.11.0:3.11"
+    "3.0.1:3.11"
+    "3.1.7:3.11"
+    "3.1.7:3.12"
+)
 
-# .vscode/launch.json was never committed but Dockerfiles COPY it.
-# Create a placeholder if missing so the build succeeds.
+# .vscode/launch.json may not be committed; create placeholder if missing
 ensure_vscode_dir() {
     if [ ! -f .vscode/launch.json ]; then
         echo "  (creating placeholder .vscode/launch.json for Docker build)"
@@ -34,52 +42,42 @@ cleanup_vscode_dir() {
     fi
 }
 
-# Restore the original branch on exit (even on failure)
-cleanup() {
-    cleanup_vscode_dir
-    git checkout "$CURRENT_BRANCH" -q 2>/dev/null || true
-    git stash pop -q 2>/dev/null || true
-}
-trap cleanup EXIT
+trap cleanup_vscode_dir EXIT
 
 echo "=============================================="
 echo "  Building Airflow Kubernetes Images"
 echo "=============================================="
 echo ""
-
-# ---------------------------------------------------------------
-# 1. Build Airflow 2 image from main branch
-# ---------------------------------------------------------------
-echo "▸ Building airflow-jupyter:airflow2 (main branch)..."
-git stash --include-untracked -q 2>/dev/null || true
-git checkout main -q
-
-ensure_vscode_dir
-docker build -t airflow-jupyter:airflow2 .
-cleanup_vscode_dir
-
-echo "  ✓ airflow-jupyter:airflow2 built"
+echo "  Versions to build:"
+for combo in "${VERSIONS[@]}"; do
+    IFS=':' read -r AF_VER PY_VER <<< "$combo"
+    echo "    • Airflow ${AF_VER} / Python ${PY_VER}"
+done
 echo ""
 
 # ---------------------------------------------------------------
-# 2. Build Airflow 3 image from airflow3 branch
+# Build Airflow images from version matrix
 # ---------------------------------------------------------------
-echo "▸ Building airflow-jupyter:airflow3 (airflow3 branch)..."
-git checkout airflow3 -q
-
 ensure_vscode_dir
-docker build -t airflow-jupyter:airflow3 .
+
+for combo in "${VERSIONS[@]}"; do
+    IFS=':' read -r AF_VER PY_VER <<< "$combo"
+    TAG="airflow-jupyter:${AF_VER}-py${PY_VER}"
+
+    echo "▸ Building ${TAG}..."
+    docker build \
+        --build-arg AIRFLOW_VERSION="${AF_VER}" \
+        --build-arg PYTHON_VERSION="${PY_VER}" \
+        -t "${TAG}" .
+    echo "  ✓ ${TAG} built"
+    echo ""
+done
+
 cleanup_vscode_dir
 
-echo "  ✓ airflow-jupyter:airflow3 built"
-echo ""
-
 # ---------------------------------------------------------------
-# 3. Switch back and build the JupyterHub image
+# Build the JupyterHub image
 # ---------------------------------------------------------------
-git checkout "$CURRENT_BRANCH" -q
-git stash pop -q 2>/dev/null || true
-
 echo "▸ Building airflow-hub:latest (JupyterHub + KubeSpawner)..."
 docker build -t airflow-hub:latest ./hub/
 echo "  ✓ airflow-hub:latest built"
@@ -89,9 +87,11 @@ echo "=============================================="
 echo "  All images built successfully!"
 echo ""
 echo "  Images:"
-echo "    • airflow-jupyter:airflow2  (Airflow 2.11.0)"
-echo "    • airflow-jupyter:airflow3  (Airflow 3.1.7)"
-echo "    • airflow-hub:latest        (JupyterHub)"
+for combo in "${VERSIONS[@]}"; do
+    IFS=':' read -r AF_VER PY_VER <<< "$combo"
+    echo "    • airflow-jupyter:${AF_VER}-py${PY_VER}"
+done
+echo "    • airflow-hub:latest (JupyterHub)"
 echo ""
 echo "  Next: run ./deploy.sh"
 echo "=============================================="
