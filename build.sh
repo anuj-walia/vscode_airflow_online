@@ -1,82 +1,54 @@
 #!/usr/bin/env bash
 # =============================================================================
-# build.sh — Build Docker images for all supported Airflow + Python combos
+# build.sh — Build the single Airflow + JupyterLab Docker image
 #
-# Builds images from the unified Dockerfile using build args.
-# Each combo produces: airflow-jupyter:{airflow_version}-py{python_version}
-# Also builds the JupyterHub image: airflow-hub:latest
+# Builds just 2 images:
+#   1. airflow-jupyter:latest  (single image with all Python versions)
+#   2. airflow-hub:latest      (JupyterHub + KubeSpawner)
+#
+# Airflow is NOT installed at build time — it's installed at first
+# pod startup based on the user's version selection.
 # =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# =============================================================================
-# Supported Version Combos — Add new entries here
-# Format: "AIRFLOW_VERSION:PYTHON_VERSION"
-# =============================================================================
-VERSIONS=(
-    "2.10.5:3.11"
-    "2.11.0:3.11"
-    "3.0.1:3.11"
-    "3.1.7:3.11"
-    "3.1.7:3.12"
-)
-
 # .vscode/launch.json may not be committed; create placeholder if missing
-ensure_vscode_dir() {
-    if [ ! -f .vscode/launch.json ]; then
-        echo "  (creating placeholder .vscode/launch.json for Docker build)"
-        mkdir -p .vscode
-        echo '{"version":"0.2.0","configurations":[]}' > .vscode/launch.json
-        CREATED_VSCODE=true
-    else
-        CREATED_VSCODE=false
-    fi
-}
+if [ ! -f .vscode/launch.json ]; then
+    echo "  (creating placeholder .vscode/launch.json for Docker build)"
+    mkdir -p .vscode
+    echo '{"version":"0.2.0","configurations":[]}' > .vscode/launch.json
+    CREATED_VSCODE=true
+else
+    CREATED_VSCODE=false
+fi
 
-cleanup_vscode_dir() {
+cleanup() {
     if [ "${CREATED_VSCODE:-false}" = true ]; then
         rm -f .vscode/launch.json
         rmdir .vscode 2>/dev/null || true
     fi
 }
-
-trap cleanup_vscode_dir EXIT
+trap cleanup EXIT
 
 echo "=============================================="
 echo "  Building Airflow Kubernetes Images"
 echo "=============================================="
 echo ""
-echo "  Versions to build:"
-for combo in "${VERSIONS[@]}"; do
-    IFS=':' read -r AF_VER PY_VER <<< "$combo"
-    echo "    • Airflow ${AF_VER} / Python ${PY_VER}"
-done
+
+# ---------------------------------------------------------------
+# 1. Build the single Airflow image
+# ---------------------------------------------------------------
+echo "▸ Building airflow-jupyter:latest..."
+echo "  (Includes Python 3.9, 3.10, 3.11, 3.12)"
+echo "  (Airflow will be installed at first pod startup)"
+docker build -t airflow-jupyter:latest .
+echo "  ✓ airflow-jupyter:latest built"
 echo ""
 
 # ---------------------------------------------------------------
-# Build Airflow images from version matrix
-# ---------------------------------------------------------------
-ensure_vscode_dir
-
-for combo in "${VERSIONS[@]}"; do
-    IFS=':' read -r AF_VER PY_VER <<< "$combo"
-    TAG="airflow-jupyter:${AF_VER}-py${PY_VER}"
-
-    echo "▸ Building ${TAG}..."
-    docker build \
-        --build-arg AIRFLOW_VERSION="${AF_VER}" \
-        --build-arg PYTHON_VERSION="${PY_VER}" \
-        -t "${TAG}" .
-    echo "  ✓ ${TAG} built"
-    echo ""
-done
-
-cleanup_vscode_dir
-
-# ---------------------------------------------------------------
-# Build the JupyterHub image
+# 2. Build the JupyterHub image
 # ---------------------------------------------------------------
 echo "▸ Building airflow-hub:latest (JupyterHub + KubeSpawner)..."
 docker build -t airflow-hub:latest ./hub/
@@ -87,11 +59,8 @@ echo "=============================================="
 echo "  All images built successfully!"
 echo ""
 echo "  Images:"
-for combo in "${VERSIONS[@]}"; do
-    IFS=':' read -r AF_VER PY_VER <<< "$combo"
-    echo "    • airflow-jupyter:${AF_VER}-py${PY_VER}"
-done
-echo "    • airflow-hub:latest (JupyterHub)"
+echo "    • airflow-jupyter:latest  (runtime Airflow install)"
+echo "    • airflow-hub:latest      (JupyterHub)"
 echo ""
 echo "  Next: run ./deploy.sh"
 echo "=============================================="
