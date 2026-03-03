@@ -27,10 +27,27 @@ AIRFLOW_VENV="/opt/airflow/venv"
 JUPYTER_VENV="/opt/jupyter_venv"
 SCRIPTS_DIR="/opt/airflow-scripts"
 
-# ---- Step 1: Install Airflow if not already installed ----
+# ---- Step 1: Install Airflow (or reinstall if version changed) ----
+NEED_INSTALL=false
+
 if [ ! -f "${AIRFLOW_VENV}/bin/airflow" ]; then
+    NEED_INSTALL=true
     echo ""
     echo "▸ First startup: installing Apache Airflow ${AIRFLOW_VERSION}..."
+elif [ -f "/opt/airflow/.airflow_version" ] && [ -f "/opt/airflow/.python_version" ]; then
+    CACHED_AF_VER=$(cat /opt/airflow/.airflow_version)
+    CACHED_PY_VER=$(cat /opt/airflow/.python_version)
+    if [ "${CACHED_AF_VER}" != "${AIRFLOW_VERSION}" ] || [ "${CACHED_PY_VER}" != "${PYTHON_VERSION}" ]; then
+        echo ""
+        echo "▸ Version changed: ${CACHED_AF_VER}/py${CACHED_PY_VER} → ${AIRFLOW_VERSION}/py${PYTHON_VERSION}"
+        echo "  Removing old installation..."
+        rm -rf "${AIRFLOW_VENV}"
+        rm -f /opt/airflow/airflow.db
+        NEED_INSTALL=true
+    fi
+fi
+
+if [ "${NEED_INSTALL}" = true ]; then
     echo "  (This takes 1-3 minutes. Subsequent starts will be instant.)"
     echo ""
 
@@ -58,7 +75,7 @@ if [ ! -f "${AIRFLOW_VENV}/bin/airflow" ]; then
     echo "${AIRFLOW_VERSION}" > /opt/airflow/.airflow_version
     echo "${PYTHON_VERSION}" > /opt/airflow/.python_version
 else
-    echo "  ✓ Airflow already installed (cached in PVC)"
+    echo "  ✓ Airflow ${AIRFLOW_VERSION} already installed (cached in PVC)"
 fi
 
 # ---- Ensure Airflow venv is in PATH ----
