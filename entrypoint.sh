@@ -136,8 +136,9 @@ SERVICE_PREFIX="${JUPYTERHUB_SERVICE_PREFIX:-/}"
 if [ "${AIRFLOW_MAJOR}" = "2" ]; then
     AIRFLOW_PROXY_NAME="airflow-webserver"
     AIRFLOW_PROXY_CMD="['${AIRFLOW_VENV}/bin/airflow', 'webserver', '--port', '{port}']"
-    AIRFLOW_PROXY_ABSOLUTE="False"
+    AIRFLOW_PROXY_ABSOLUTE="True"
     AIRFLOW_PROXY_TITLE="Airflow Webserver"
+    export AIRFLOW__WEBSERVER__BASE_URL="http://localhost:8888${SERVICE_PREFIX}airflow-webserver"
 else
     AIRFLOW_PROXY_NAME="airflow-api"
     AIRFLOW_PROXY_CMD="['${AIRFLOW_VENV}/bin/airflow', 'api-server', '--port', '{port}']"

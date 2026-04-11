@@ -11,18 +11,47 @@ import os
 # Supported Versions (static list)
 # =============================================================================
 AIRFLOW_VERSIONS = {
-    "2.9.3":  {"display_name": "Airflow 2.9.3"},
-    "2.10.5": {"display_name": "Airflow 2.10.5"},
-    "2.11.0": {"display_name": "Airflow 2.11.0 (Stable)", "default": True},
-    "3.0.1":  {"display_name": "Airflow 3.0.1"},
-    "3.1.7":  {"display_name": "Airflow 3.1.7 (Latest)"},
+    "2.9.3": {
+        "display_name": "Airflow 2.9.3",
+        "kubespawner_override": {"environment": {"AIRFLOW_VERSION": "2.9.3"}},
+    },
+    "2.10.5": {
+        "display_name": "Airflow 2.10.5",
+        "kubespawner_override": {"environment": {"AIRFLOW_VERSION": "2.10.5"}},
+    },
+    "2.11.0": {
+        "display_name": "Airflow 2.11.0 (Stable)",
+        "default": True,
+        "kubespawner_override": {"environment": {"AIRFLOW_VERSION": "2.11.0"}},
+    },
+    "3.0.1": {
+        "display_name": "Airflow 3.0.1",
+        "kubespawner_override": {"environment": {"AIRFLOW_VERSION": "3.0.1"}},
+    },
+    "3.1.7": {
+        "display_name": "Airflow 3.1.7 (Latest)",
+        "kubespawner_override": {"environment": {"AIRFLOW_VERSION": "3.1.7"}},
+    },
 }
 
 PYTHON_VERSIONS = {
-    "3.9":  {"display_name": "Python 3.9"},
-    "3.10": {"display_name": "Python 3.10"},
-    "3.11": {"display_name": "Python 3.11", "default": True},
-    "3.12": {"display_name": "Python 3.12"},
+    "3.9": {
+        "display_name": "Python 3.9",
+        "kubespawner_override": {"environment": {"PYTHON_VERSION": "3.9"}},
+    },
+    "3.10": {
+        "display_name": "Python 3.10",
+        "kubespawner_override": {"environment": {"PYTHON_VERSION": "3.10"}},
+    },
+    "3.11": {
+        "display_name": "Python 3.11",
+        "default": True,
+        "kubespawner_override": {"environment": {"PYTHON_VERSION": "3.11"}},
+    },
+    "3.12": {
+        "display_name": "Python 3.12",
+        "kubespawner_override": {"environment": {"PYTHON_VERSION": "3.12"}},
+    },
 }
 
 # =============================================================================
