@@ -79,9 +79,9 @@ RUN mkdir -p /root/.jupyter && \
     }" >> /root/.jupyter/jupyter_server_config.py
 
 # Install VS Code Extensions
-RUN code-server --install-extension ms-python.python \
-    && code-server --install-extension redhat.vscode-yaml \
-    && code-server --install-extension janisdd.vscode-edit-csv
+RUN code-server --install-extension ms-python.python --verbose --log trace
+RUN code-server --install-extension redhat.vscode-yaml --verbose --log trace
+RUN code-server --install-extension janisdd.vscode-edit-csv --verbose --log trace
 
 # Configure VS Code Default Python Interpreter
 RUN mkdir -p /root/.local/share/code-server/User && \
