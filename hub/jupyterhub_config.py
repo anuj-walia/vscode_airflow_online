@@ -97,8 +97,10 @@ async def pre_spawn_hook(spawner):
     """Pass the selected Airflow and Python versions to the pod as env vars."""
     options = spawner.user_options
 
-    af_ver = options.get("profile--airflow_version", "2.11.0")
-    py_ver = options.get("profile--python_version", "3.11")
+    # af_ver = options.get("profile--airflow_version", "2.11.0")
+    # py_ver = options.get("profile--python_version", "3.11")
+    af_ver = options.get("airflow_version", "2.11.0")
+    py_ver = options.get("python_version", "3.11")
 
     spawner.log.info(f"Spawning pod: Airflow {af_ver} / Python {py_ver}")
 
