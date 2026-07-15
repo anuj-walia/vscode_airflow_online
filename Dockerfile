@@ -43,7 +43,8 @@ RUN mkdir -p /opt/airflow/icons && \
 RUN mkdir -p /root/.jupyter && \
     echo "c.ServerProxy.servers = { \
     'airflow-api': { \
-    'command': ['/opt/airflow_venv/bin/airflow', 'api-server', '--port', '{port}'], \
+    'command': ['/opt/airflow_venv/bin/airflow', 'api-server', '--port', '9091'], \
+    'port': 9091, \
     'timeout': 120, \
     'absolute_url': True, \
     'launcher_entry': { \
