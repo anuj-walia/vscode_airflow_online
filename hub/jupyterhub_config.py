@@ -86,10 +86,13 @@ c.KubeSpawner.extra_container_config = {
         "echo '{\"admin\": \"admin\"}' > /opt/airflow/simple_auth_manager_passwords.json.generated && "
         "export AIRFLOW__API__BASE_URL=http://localhost:8888${JUPYTERHUB_SERVICE_PREFIX}airflow-api && "
         # Airflow 3: LocalExecutor workers call the Execution API over HTTP to report task state.
-        # This MUST bypass the JupyterHub + jupyter-server-proxy auth layers, or every task 403s
-        # and the unpicklable HTTPStatusError kills the scheduler. Point it straight at the
-        # api-server on its fixed in-pod port (pinned to 9091 in the airflow3 image's proxy config).
-        "export AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://localhost:9091/execution/ && "
+        # This MUST bypass the JupyterHub + jupyter-server-proxy auth layers (port 8888), or every
+        # task 403s and the unpicklable HTTPStatusError kills the scheduler. Hit the api-server
+        # directly on its fixed in-pod port (9091, pinned in the airflow3 image's proxy config).
+        # The path prefix is required: the api-server sets FastAPI root_path from base_url's path
+        # (airflow/api_fastapi/app.py), so ALL routes -- including the /execution mount -- live under
+        # ${JUPYTERHUB_SERVICE_PREFIX}airflow-api. Mirror base_url exactly, just on 9091 + /execution/.
+        "export AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://localhost:9091${JUPYTERHUB_SERVICE_PREFIX}airflow-api/execution/ && "
         "exec jupyterhub-singleuser "
         "  --allow-root "
         "  --ip=0.0.0.0 "
