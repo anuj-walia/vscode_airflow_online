@@ -1,0 +1,28 @@
+apiVersion: v2
+name: airflow-dev-platform
+description: Multi-user Apache Airflow 3 developer workspaces on GKE, gated by enterprise OIDC
+type: application
+
+# Chart version: bump on any chart change.
+version: 1.0.0
+
+# The Airflow release the default workspace image is built from.
+appVersion: "3.3.2"
+
+keywords:
+  - airflow
+  - jupyterhub
+  - gke
+  - oidc
+
+dependencies:
+  # Zero to JupyterHub. Everything under the `jupyterhub:` key in values.yaml
+  # is passed to this subchart.
+  #
+  # Chart 4.4.2 -> JupyterHub 5.5.2, kubespawner 7.1.0, oauthenticator 17.4.0.
+  # The OIDC configuration in values.yaml targets oauthenticator 17.x trait
+  # names (auth_state_groups_key, manage_groups); do not bump this dependency
+  # without re-reading charts/airflow-dev-platform/values.yaml.
+  - name: jupyterhub
+    version: "4.4.2"
+    repository: "https://hub.jupyter.org/helm-chart/"

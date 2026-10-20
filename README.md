@@ -1,57 +1,155 @@
-# Docker Project: Airflow + Jupyter + VS Code
+# Airflow 3 Developer Platform
 
-This project provides a complete Docker-based development environment for Apache Airflow, integrated with JupyterLab and VS Code (code-server).
+Multi-user Apache Airflow **3.3.2** development workspaces on GKE. Each
+authorised user signs in with enterprise SSO and gets their own pod running
+JupyterLab, VS Code and a full Airflow 3 stack, with their own persistent
+volume.
 
-## Features
+This is the `prod-airflow3` branch: Airflow 3 only, deployed with Helm,
+gated by OIDC. It has no Airflow 2 path, no self-registration, no `admin/admin`
+and no local image tags. See [AGENTS.md](AGENTS.md) for how it relates to the
+other branches.
 
--   **Apache Airflow 2.11.0**:
-    -   Configured with `SequentialExecutor` and SQLite.
-    -   Webserver and Scheduler logs accessible via Jupyter Launcher.
-    -   Virtual environment at `/opt/airflow_venv`.
--   **JupyterLab**:
-    -   Serves as the main entry point.
-    -   Includes `jupyter-server-proxy` for accessing Airflow and VS Code.
--   **VS Code (code-server)**:
-    -   Integrated into JupyterLab.
-    -   Pre-installed extensions: Python, YAML, CSV Editor.
-    -   Pre-configured debugging for Airflow DAGs and tasks.
-    -   Git installed for version control.
--   **Python 3.11**: Base image.
+```
+Browser
+  └─ Google Cloud LB — TLS, HTTP→HTTPS, Google-managed certificate
+       └─ JupyterHub (Zero to JupyterHub chart)
+            ├─ GenericOAuthenticator → your OIDC provider, group-authorised
+            └─ KubeSpawner → one workspace pod per user
+                 ├─ JupyterLab                          :8888  (the only exposed port)
+                 ├─ Airflow API server + UI       127.0.0.1:9091
+                 ├─ scheduler · dag-processor · triggerer, supervised
+                 ├─ VS Code (code-server)         127.0.0.1:dyn
+                 └─ /opt/airflow — per-user PVC: DAGs, logs, SQLite metadata DB
+```
 
-## Quick Start
+Everything but JupyterLab binds to loopback, so reaching the Airflow UI or VS
+Code requires a JupyterHub session for that specific user.
 
-### Prerequisites
--   Docker and Docker Compose installed.
+## Quick start
 
-### Running the Project
+```bash
+# 1. Cluster, registry, static IP, DNS — docs/gcp-setup.md
+# 2. Build and push the workspace image
+scripts/build-image.sh --registry europe-west1-docker.pkg.dev/PROJECT/airflow --push
 
-1.  **Start the container**:
-    ```bash
-    docker compose up --build
-    ```
+# 3. Store the OIDC client credentials — docs/oidc-setup.md
+scripts/create-oidc-secret.sh \
+  --namespace airflow-prod \
+  --issuer https://login.example.com/oauth2/default \
+  --client-id <client-id>
 
-2.  **Access the Interface**:
-    -   Open your browser and go to `http://localhost:8888`.
-    -   You will see the JupyterLab interface.
+# 4. Deploy
+scripts/deploy.sh --env prod \
+  --domain airflow.example.com \
+  --image europe-west1-docker.pkg.dev/PROJECT/airflow/airflow-workspace:3.3.2-<sha>
+```
 
-3.  **Launch Tools**:
-    -   **VS Code**: Click the "VS Code" icon in the launcher.
-    -   **Airflow Webserver**: Click the "Airflow Webserver" icon.
-    -   **Scheduler Logs**: Click the "Airflow Scheduler Logs" icon.
+`deploy.sh` runs a preflight first: cluster reachable, OIDC Secret present,
+domain and image supplied, NetworkPolicy enforcement plausible. It refuses to
+deploy a configuration that would come up unprotected or unreachable.
+
+## Workspace size
+
+**1 CPU and 16 GB per user pod**, request equal to limit so every workspace is
+Guaranteed QoS. Configurable everywhere it matters:
+
+```bash
+scripts/deploy.sh ... --cpu 2 --memory 32G
+```
+
+or commit it to `environments/<env>.values.yaml`:
+
+```yaml
+jupyterhub:
+  singleuser:
+    cpu:      { limit: 1,   guarantee: 1 }
+    memory:   { limit: 16G, guarantee: 16G }
+```
+
+Those four values are the only place size is defined — the user-placeholder
+pods that keep warm capacity size themselves from them automatically. Add a
+`singleuser.profileList` if you want users to pick per spawn;
+[docs/operations.md](docs/operations.md#workspace-sizing) has a worked
+example, plus quota and node-pool implications.
+
+## Who can log in
+
+Nobody, until you say so. The Hub runs `GenericOAuthenticator` against your
+OIDC issuer, discovers its endpoints from
+`/.well-known/openid-configuration`, and authorises by IdP group:
+
+```yaml
+jupyterhub:
+  hub:
+    extraEnv:
+      OIDC_ALLOWED_GROUPS: "airflow-platform-users"    # may sign in
+      OIDC_OPERATOR_GROUPS: "airflow-platform-admins"  # + see/stop others' workspaces
+```
+
+If neither that nor an explicit `OIDC_ALLOW_ALL_AUTHENTICATED=true` is set,
+**the Hub exits at startup** rather than serving an unprotected login page.
+Same if the issuer is missing or unreachable. `tests/test_hub_config.py`
+executes the shipped configuration and asserts exactly that.
+
+## Layout
+
+```
+VERSIONS.env                      every pin: Airflow, Python, code-server, z2jh
+images/workspace/                 the workspace image
+  Dockerfile                        non-root, Airflow 3.3.2 + constraints
+  bin/start.sh                      volume bootstrap, proxy URLs, db migrate, exec
+  bin/workspace_services.py         supervises scheduler/dag-processor/triggerer
+  jupyter_server_config.py          jupyter-server-proxy registrations
+charts/airflow-dev-platform/      Helm chart wrapping Zero to JupyterHub 4.4.2
+  values.yaml                       OIDC, sizing, isolation, culling
+  templates/                        GKE BackendConfig/FrontendConfig/cert, quota
+environments/{dev,prod}.values.yaml
+scripts/{build-image,create-oidc-secret,deploy}.sh
+tests/test_hub_config.py
+docs/{gcp-setup,oidc-setup,operations,security}.md
+```
+
+## Inside a workspace
+
+The JupyterLab launcher has three entries:
+
+- **Airflow UI** — the Airflow 3 API server and web UI. Credentials are on
+  the Services page; they are generated per workspace, not shared.
+- **Airflow Services** — start, stop and restart the scheduler, DAG processor
+  and triggerer, with live log tails and restart counts. All three start
+  automatically; this page is for when one of them misbehaves.
+- **VS Code** — `code-server`, opened on `/opt/airflow`, with the workspace
+  interpreter preselected.
+
+`/opt/airflow` is the user's PVC. DAGs, logs, plugins, notebooks, editor
+state and the Airflow SQLite metadata database all live there and survive a
+restart, a reschedule and an idle cull.
 
 ## Development
 
-### VS Code Debugging
-The project includes a pre-configured `.vscode/launch.json` (baked into the image) with the following configurations:
+```bash
+python3 tests/test_hub_config.py            # config and policy tests
+helm lint charts/airflow-dev-platform
+scripts/deploy.sh --env dev --domain ... --image ... --dry-run
 
-1.  **Python: Current File**: Runs the currently open Python file.
-2.  **Airflow: Test Task**: Debugs a specific task (prompts for DAG ID, Task ID, Date).
-3.  **Airflow: Test DAG (CLI)**: Debugs a full DAG run (prompts for DAG ID, Date).
+# Run the workspace image standalone (no Hub, token auth on)
+scripts/build-image.sh
+docker run --rm -p 8888:8888 -v "$PWD/dags:/opt/airflow/dags" airflow-workspace:<tag>
+```
 
-### Source Control
-The project is initialized as a Git repository. You can use the VS Code Source Control view or the terminal to manage your code.
+## Documentation
 
-## Customization
+- [docs/gcp-setup.md](docs/gcp-setup.md) — cluster, node pools, registry, DNS, Cloud SQL, backups
+- [docs/oidc-setup.md](docs/oidc-setup.md) — Okta / Entra / Keycloak registration, claims, offboarding
+- [docs/operations.md](docs/operations.md) — sizing, upgrades, runbook, cost
+- [docs/security.md](docs/security.md) — posture, known gaps, pre-launch checklist
 
--   **Dependencies**: Add Python packages or Airflow providers to `requirements.txt`.
--   **Configuration**: Modify `Dockerfile` or `entrypoint.sh` for advanced setups.
+## Scope
+
+These are **development** workspaces: `LocalExecutor` against per-user SQLite,
+sized for authoring and testing DAGs. Production DAGs belong in a separate
+Airflow deployment built on the official Airflow Helm chart with external
+PostgreSQL, fed from Git through CI. Keeping those two things apart is the
+main architectural decision on this branch;
+[docs/security.md](docs/security.md#known-gaps) says why.

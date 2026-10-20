@@ -1,0 +1,43 @@
+{{- if .Values.platform.resourceQuota.enabled }}
+---
+# ---------------------------------------------------------------------------
+# ResourceQuota — an upper bound on what the platform can consume, so a spike
+# in logins cannot scale the node pool without limit.
+#
+# When the quota is exhausted a spawn fails with a clear "exceeded quota"
+# event rather than a pod that pends forever.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: airflow-dev-platform
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- toYaml .Values.platform.resourceQuota.hard | nindent 4 }}
+{{- end }}
+{{- if .Values.platform.limitRange.enabled }}
+---
+# ---------------------------------------------------------------------------
+# LimitRange — defaults and a ceiling for anything scheduled in this
+# namespace, including pods the spawner did not create. With a ResourceQuota
+# on requests.*, a pod with no requests is rejected; these defaults prevent
+# that from being a surprise.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: airflow-dev-platform
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        {{- toYaml .Values.platform.limitRange.defaultRequest | nindent 8 }}
+      default:
+        {{- toYaml .Values.platform.limitRange.default | nindent 8 }}
+      max:
+        {{- toYaml .Values.platform.limitRange.max | nindent 8 }}
+{{- end }}

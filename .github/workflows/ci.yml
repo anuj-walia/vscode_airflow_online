@@ -1,0 +1,107 @@
+name: ci
+
+on:
+  push:
+    branches: [prod-airflow3]
+  pull_request:
+    branches: [prod-airflow3]
+
+jobs:
+  config:
+    name: chart and config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyyaml
+
+      # Executes the shipped hub.extraConfig snippets and asserts the
+      # fail-closed authorisation behaviour.
+      - name: config tests
+        run: python3 tests/test_hub_config.py
+
+      - uses: azure/setup-helm@v4
+
+      - name: helm lint and render
+        run: |
+          helm repo add jupyterhub https://hub.jupyter.org/helm-chart/
+          helm dependency update charts/airflow-dev-platform
+          helm lint charts/airflow-dev-platform \
+            --set platform.domain=ci.example.com \
+            --set 'jupyterhub.ingress.hosts={ci.example.com}' \
+            --set jupyterhub.singleuser.image.name=example/workspace \
+            --set jupyterhub.singleuser.image.tag=ci
+          for env in dev prod; do
+            echo "::group::render $env"
+            helm template ci charts/airflow-dev-platform \
+              --namespace "airflow-$env" \
+              --values "environments/$env.values.yaml" \
+              --set platform.domain=ci.example.com \
+              --set 'jupyterhub.ingress.hosts={ci.example.com}' \
+              --set jupyterhub.singleuser.image.name=example/workspace \
+              --set jupyterhub.singleuser.image.tag=ci > "/tmp/$env.yaml"
+            echo "::endgroup::"
+          done
+
+      - name: manifests are valid kubernetes
+        run: |
+          # The GKE CRDs (BackendConfig, FrontendConfig, ManagedCertificate)
+          # have no upstream schema, hence -ignore-missing-schemas.
+          curl -sSL -o /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar xzf /tmp/kubeconform.tar.gz -C /tmp
+          /tmp/kubeconform -strict -ignore-missing-schemas -summary /tmp/dev.yaml /tmp/prod.yaml
+
+      # The chart is supposed to refuse configurations that would deploy a
+      # placeholder image, an unreachable ingress, or a digest alongside the
+      # pre-puller. Assert each guard actually fires rather than trusting it.
+      - name: chart guards reject bad configurations
+        run: |
+          set -u
+          expect_failure() {
+            local description="$1"; shift
+            if helm template guard charts/airflow-dev-platform "$@" >/dev/null 2>&1; then
+              echo "FAIL: chart accepted a configuration it should reject: ${description}" >&2
+              exit 1
+            fi
+            echo "  ok  rejected: ${description}"
+          }
+
+          expect_failure "placeholder workspace image" \
+            --set platform.domain=ci.example.com \
+            --set 'jupyterhub.ingress.hosts={ci.example.com}'
+
+          expect_failure "domain missing from ingress hosts" \
+            --set platform.domain=ci.example.com \
+            --set 'jupyterhub.ingress.hosts={other.example.com}' \
+            --set jupyterhub.singleuser.image.name=example/workspace \
+            --set jupyterhub.singleuser.image.tag=ci
+
+          expect_failure "digest image with the pre-puller enabled" \
+            --set platform.domain=ci.example.com \
+            --set 'jupyterhub.ingress.hosts={ci.example.com}' \
+            --set 'jupyterhub.singleuser.image.name=example/workspace@sha256:0123456789abcdef' \
+            --set jupyterhub.singleuser.image.tag=
+
+  shell:
+    name: shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: shellcheck -S warning scripts/*.sh images/workspace/bin/*.sh
+
+  image:
+    name: workspace image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # build-image.sh smoke-tests the result: Airflow imports, uid is 1000,
+      # image assets are outside AIRFLOW_HOME, the example DAG compiles.
+      - name: build and smoke test
+        run: scripts/build-image.sh

@@ -1,0 +1,76 @@
+# ===========================================================================
+# environments/dev.values.yaml — non-production GKE environment
+#
+#   helm upgrade --install airflow-dev charts/airflow-dev-platform \
+#     -n airflow-dev -f environments/dev.values.yaml \
+#     --set platform.domain=airflow-dev.example.com \
+#     --set jupyterhub.ingress.hosts={airflow-dev.example.com}
+#
+# or just: scripts/deploy.sh --env dev --domain airflow-dev.example.com
+# ===========================================================================
+
+platform:
+  domain: ""          # set at deploy time
+  resourceQuota:
+    enabled: true
+    hard:
+      requests.cpu: "8"
+      requests.memory: 120Gi
+      limits.cpu: "8"
+      limits.memory: 120Gi
+      persistentvolumeclaims: "20"
+      count/pods: "20"
+  gke:
+    enabled: true
+    staticIpName: ""
+    managedCertificate:
+      enabled: true
+
+jupyterhub:
+  hub:
+    db:
+      type: sqlite-pvc
+      pvc:
+        storage: 2Gi
+    extraEnv:
+      PLATFORM_DOMAIN: ""
+      # Restrict even the dev environment to a real IdP group. An open dev
+      # platform is how a dev platform ends up holding production credentials.
+      OIDC_ALLOWED_GROUPS: "airflow-platform-users-dev"
+      OIDC_OPERATOR_GROUPS: "airflow-platform-admins"
+      OIDC_ALLOW_ALL_AUTHENTICATED: "false"
+
+  singleuser:
+    image:
+      name: REPLACE_ME/airflow-workspace   # set by scripts/deploy.sh --image
+      tag: "3.3.2"
+
+    # Smaller than production, to keep the dev cluster cheap. The production
+    # default is 1 CPU / 16G; see environments/prod.values.yaml.
+    cpu:
+      limit: 1
+      guarantee: 0.5
+    memory:
+      limit: 8G
+      guarantee: 4G
+
+    storage:
+      capacity: 10Gi
+
+  cull:
+    timeout: 1800     # 30 minutes idle
+    maxAge: 28800     # 8 hours absolute
+
+  scheduling:
+    userPlaceholder:
+      replicas: 0
+    # A single-pool dev cluster usually has no purpose-labelled nodes.
+    corePods:
+      nodeAffinity:
+        matchNodePurpose: prefer
+    userPods:
+      nodeAffinity:
+        matchNodePurpose: prefer
+
+  debug:
+    enabled: true

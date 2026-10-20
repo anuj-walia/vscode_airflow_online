@@ -1,0 +1,11 @@
+# Jupyter layer for the workspace image. Airflow itself is installed in the
+# Dockerfile from the official constraints file and is deliberately absent here.
+
+jupyterlab==4.6.3
+jupyter-server-proxy==4.5.0
+jupyterlab-git==0.54.1
+
+# Must match the jupyterhub version in the Hub image that z2jh ships
+# (chart 4.4.2 -> appVersion 5.5.2). A singleuser server on a different major
+# version than the Hub is not a supported combination.
+jupyterhub==5.5.2

@@ -1,15 +1,30 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+
+# Editors / OS
 .DS_Store
-.env
+.idea/
+.vscode/
+
+# Helm: the vendored subchart is fetched by `helm dependency update`.
+charts/*/charts/
+charts/*/Chart.lock
+
+# Local Airflow state, if the image is run standalone from a bind mount.
 airflow.db
 airflow.cfg
 webserver_config.py
 logs/
 plugins/
-# Keep dags directory but ignore pycache inside it
 dags/__pycache__/
-# Ignore the virtual environment if created locally (though we use docker)
-venv/
-.idea
 
+# Generated credentials — must never be committed.
+*.generated
+simple_auth_passwords.json
+simple_auth_manager_passwords.json*
+.env
+*.tfvars

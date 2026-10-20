@@ -1,0 +1,521 @@
+# ===========================================================================
+# airflow-dev-platform — default values
+#
+# These defaults are safe but incomplete: the chart will refuse to start the
+# Hub until you supply an OIDC issuer, a client credential Secret, and an
+# authorisation rule. Per-environment overrides live in environments/*.yaml.
+#
+# Everything under `jupyterhub:` is passed to the Zero to JupyterHub subchart.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# platform — values consumed by this chart's own templates
+# ---------------------------------------------------------------------------
+platform:
+  # Public hostname. Used for the Google-managed certificate and echoed into
+  # jupyterhub.ingress.hosts by scripts/deploy.sh --domain.
+  domain: ""
+
+  # Namespace-wide guard rails. With the default 1 CPU / 16Gi workspace, the
+  # quota below caps the platform at roughly 20 concurrent workspaces.
+  resourceQuota:
+    enabled: true
+    hard:
+      requests.cpu: "24"
+      requests.memory: 340Gi
+      limits.cpu: "24"
+      limits.memory: 340Gi
+      persistentvolumeclaims: "60"
+      count/pods: "60"
+
+  # Floor/ceiling for anything scheduled into the namespace, including pods
+  # created outside the spawner.
+  limitRange:
+    enabled: true
+    defaultRequest:
+      cpu: 100m
+      memory: 256Mi
+    default:
+      cpu: "2"
+      memory: 16Gi
+    max:
+      cpu: "8"
+      memory: 64Gi
+
+  # GKE-native ingress: external HTTP(S) load balancer, Google-managed TLS
+  # certificate, HTTP->HTTPS redirect, and a health check that targets the
+  # Hub's own endpoint instead of "/".
+  #
+  # Set enabled: false if you terminate TLS with ingress-nginx + cert-manager
+  # or front the platform with IAP; then configure jupyterhub.ingress yourself.
+  gke:
+    enabled: true
+    # Name of a reserved global static IP (`gcloud compute addresses create
+    # ... --global`). Leave empty to let GKE allocate an ephemeral address,
+    # which changes on every ingress recreation and breaks DNS.
+    staticIpName: ""
+    managedCertificate:
+      enabled: true
+    # Requests above this many seconds are dropped by the LB. JupyterLab's
+    # websockets need a generous value.
+    backendTimeoutSeconds: 3600
+
+# ===========================================================================
+# jupyterhub — Zero to JupyterHub subchart
+# ===========================================================================
+jupyterhub:
+
+  # -------------------------------------------------------------------------
+  # Hub
+  # -------------------------------------------------------------------------
+  hub:
+    image:
+      # Pinned by the chart dependency; ships oauthenticator 17.4.0.
+      tag: "4.4.2"
+
+    db:
+      # sqlite-pvc is the z2jh default and is adequate for a single-replica
+      # Hub with a backed-up disk. Switch to `postgres` and set `url` to a
+      # Cloud SQL connection string for a Hub whose state survives the loss of
+      # a single zone. Per-user Airflow metadata is unaffected either way --
+      # that stays as SQLite on each user's own volume.
+      type: sqlite-pvc
+      pvc:
+        storage: 4Gi
+        # GKE default is standard-rwo; pd-balanced is a better fit for a DB.
+        storageClassName: premium-rwo
+
+    config:
+      JupyterHub:
+        # oauthenticator entry point for GenericOAuthenticator.
+        authenticator_class: generic-oauth
+        # Logging out of the Hub must also stop the workspace, otherwise a
+        # revoked user's pod keeps running with a live token.
+        shutdown_on_logout: true
+        admin_access: false
+
+      Authenticator:
+        # auth_state holds the ID token claims; manage_groups and
+        # auth_state_groups_key both require it. z2jh generates and persists
+        # the CryptKeeper key automatically.
+        enable_auth_state: true
+        # Re-validate against the IdP at most this often, and always before a
+        # spawn. A user removed at the IdP loses access within this window
+        # rather than at the end of a browser session.
+        auth_refresh_age: 900
+        # No local accounts, no implicit allow. Authorisation is by IdP group
+        # only -- see hub.extraConfig.02-oidc.
+        allow_all: false
+        allow_existing_users: false
+
+      GenericOAuthenticator:
+        # authorize_url / token_url / userdata_url are discovered from the
+        # issuer at Hub startup (hub.extraConfig.02-oidc). client_id and
+        # client_secret come from the OAUTH_CLIENT_ID / OAUTH_CLIENT_SECRET
+        # environment variables, which extraEnv sources from a Secret.
+        login_service: "Company SSO"
+        scope:
+          - openid
+          - profile
+          - email
+          - groups
+        # The claim used as the JupyterHub username. It becomes the pod name,
+        # the PVC name and the workspace identity, so it must be unique and
+        # never reassigned to a different person. `sub` is the only claim OIDC
+        # guarantees that of; override to `email` or `preferred_username` only
+        # if your IdP promises the same.
+        username_claim: sub
+        manage_groups: true
+        auth_state_groups_key: oauth_user.groups
+        # PKCE is cheap and blocks authorization-code interception.
+        enable_pkce: true
+
+      KubeSpawner:
+        # A workspace has no reason to talk to the Kubernetes API.
+        automount_service_account_token: false
+
+    # Client credentials are never stored in values. Create the Secret with
+    # scripts/create-oidc-secret.sh, then reference it here.
+    extraEnv:
+      # Public hostname, used to build the OAuth callback URL. Set by
+      # scripts/deploy.sh --domain.
+      PLATFORM_DOMAIN: ""
+      OIDC_ISSUER:
+        valueFrom:
+          secretKeyRef:
+            name: airflow-platform-oidc
+            key: issuer
+      OAUTH_CLIENT_ID:
+        valueFrom:
+          secretKeyRef:
+            name: airflow-platform-oidc
+            key: client-id
+      OAUTH_CLIENT_SECRET:
+        valueFrom:
+          secretKeyRef:
+            name: airflow-platform-oidc
+            key: client-secret
+      # Comma-separated IdP groups. Members may sign in and get a workspace.
+      OIDC_ALLOWED_GROUPS: ""
+      # Comma-separated IdP groups granted the JupyterHub operator role
+      # (read/stop other users' servers; not full Hub admin).
+      OIDC_OPERATOR_GROUPS: ""
+      # Escape hatch: "true" admits every account the IdP will authenticate.
+      # Only appropriate for a single-purpose tenant.
+      OIDC_ALLOW_ALL_AUTHENTICATED: "false"
+
+    extraConfig:
+      # Keys execute in sorted order, after all values-derived config.
+
+      01-callback: |
+        # Derive the OAuth callback from the ingress host so it cannot drift
+        # out of sync with what is registered at the IdP.
+        import os
+
+        domain = os.environ.get("PLATFORM_DOMAIN", "").strip()
+        if domain:
+            c.GenericOAuthenticator.oauth_callback_url = (
+                f"https://{domain}/hub/oauth_callback"
+            )
+
+      02-oidc: |
+        # ---------------------------------------------------------------
+        # OIDC discovery and authorisation policy.
+        #
+        # Deliberately fatal on misconfiguration. A Hub that cannot reach its
+        # issuer, or that has no authorisation rule, must not come up serving
+        # an unprotected login page -- CrashLoopBackOff is the safer failure.
+        # ---------------------------------------------------------------
+        import json
+        import os
+        import sys
+        import time
+        import urllib.request
+
+        def _env_list(name):
+            return [v.strip() for v in os.environ.get(name, "").split(",") if v.strip()]
+
+        issuer = os.environ.get("OIDC_ISSUER", "").strip().rstrip("/")
+        if not issuer:
+            sys.exit("OIDC_ISSUER is not set; refusing to start without an identity provider")
+
+        # Explicit endpoints win over discovery, for IdPs that do not publish
+        # a discovery document or sit behind a gateway.
+        authorize_url = os.environ.get("OIDC_AUTHORIZE_URL", "").strip()
+        token_url = os.environ.get("OIDC_TOKEN_URL", "").strip()
+        userdata_url = os.environ.get("OIDC_USERDATA_URL", "").strip()
+        logout_url = os.environ.get("OIDC_LOGOUT_URL", "").strip()
+
+        if not (authorize_url and token_url and userdata_url):
+            well_known = f"{issuer}/.well-known/openid-configuration"
+            metadata = None
+            last_error = None
+            for attempt in range(5):
+                try:
+                    with urllib.request.urlopen(well_known, timeout=10) as response:
+                        metadata = json.load(response)
+                    break
+                except Exception as exc:  # noqa: BLE001 - any failure is fatal below
+                    last_error = exc
+                    time.sleep(2 ** attempt)
+            if metadata is None:
+                sys.exit(f"OIDC discovery failed for {well_known}: {last_error}")
+
+            authorize_url = authorize_url or metadata["authorization_endpoint"]
+            token_url = token_url or metadata["token_endpoint"]
+            userdata_url = userdata_url or metadata["userinfo_endpoint"]
+            logout_url = logout_url or metadata.get("end_session_endpoint", "")
+
+        c.GenericOAuthenticator.authorize_url = authorize_url
+        c.GenericOAuthenticator.token_url = token_url
+        c.GenericOAuthenticator.userdata_url = userdata_url
+        if logout_url:
+            c.GenericOAuthenticator.logout_redirect_url = logout_url
+
+        # --- authorisation -------------------------------------------------
+        allowed_groups = _env_list("OIDC_ALLOWED_GROUPS")
+        operator_groups = _env_list("OIDC_OPERATOR_GROUPS")
+        allow_all = os.environ.get("OIDC_ALLOW_ALL_AUTHENTICATED", "false").lower() == "true"
+
+        if allowed_groups:
+            c.GenericOAuthenticator.allowed_groups = set(allowed_groups)
+        elif allow_all:
+            # Any account the IdP authenticates is admitted. Logged loudly so
+            # it is visible in a cluster audit.
+            c.Authenticator.allow_all = True
+            print(
+                "WARNING: OIDC_ALLOW_ALL_AUTHENTICATED=true -- every account in the "
+                "identity provider tenant can obtain a workspace.",
+                file=sys.stderr,
+            )
+        else:
+            sys.exit(
+                "No authorisation rule configured. Set OIDC_ALLOWED_GROUPS to the IdP "
+                "groups that may use the platform, or set "
+                "OIDC_ALLOW_ALL_AUTHENTICATED=true to admit the whole tenant."
+            )
+
+        if operator_groups:
+            # Enough scope to see and stop workspaces during an incident --
+            # deliberately not `admin:users` or `admin-ui` write access.
+            c.JupyterHub.load_roles.append(
+                {
+                    "name": "platform-operator",
+                    "groups": operator_groups,
+                    "scopes": [
+                        "admin-ui",
+                        "list:users",
+                        "read:users",
+                        "read:servers",
+                        "servers",
+                    ],
+                }
+            )
+
+        print(
+            f"OIDC configured: issuer={issuer} groups={allowed_groups or '(all authenticated)'} "
+            f"operators={operator_groups or '(none)'}",
+            file=sys.stderr,
+        )
+
+      03-workspace-security: |
+        # Restricted-profile security context for every workspace pod. z2jh
+        # exposes only allowPrivilegeEscalation through values, so the rest is
+        # set here. extraConfig runs last, so these win.
+        c.KubeSpawner.container_security_context = {
+            "runAsNonRoot": True,
+            "runAsUser": 1000,
+            "runAsGroup": 1000,
+            "allowPrivilegeEscalation": False,
+            "capabilities": {"drop": ["ALL"]},
+            "seccompProfile": {"type": "RuntimeDefault"},
+        }
+        c.KubeSpawner.pod_security_context = {
+            "runAsNonRoot": True,
+            "runAsUser": 1000,
+            "runAsGroup": 1000,
+            "fsGroup": 1000,
+            "seccompProfile": {"type": "RuntimeDefault"},
+        }
+
+      04-workspace-identity: |
+        # The Airflow UI inside the pod should name the person who is logged
+        # in, not "admin". username_claim is `sub` by default, which is opaque,
+        # so prefer the email/name claim from auth_state when one is present.
+        async def _workspace_environment(spawner):
+            auth_state = await spawner.user.get_auth_state() or {}
+            claims = auth_state.get("oauth_user", {}) or {}
+            display = (
+                claims.get("email")
+                or claims.get("preferred_username")
+                or spawner.user.name
+            )
+            spawner.environment["WORKSPACE_AIRFLOW_USERNAME"] = display
+
+        c.KubeSpawner.pre_spawn_hook = _workspace_environment
+
+    # A single Hub is the supported topology; make voluntary disruptions wait.
+    pdb:
+      enabled: true
+      minAvailable: 1
+
+    networkPolicy:
+      enabled: true
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+
+  # -------------------------------------------------------------------------
+  # Proxy
+  # -------------------------------------------------------------------------
+  proxy:
+    service:
+      # NodePort, not LoadBalancer: the GKE ingress in this chart's templates
+      # is what faces the internet, so the Service must stay cluster-internal.
+      type: NodePort
+      annotations:
+        cloud.google.com/backend-config: '{"default":"airflow-dev-platform-hub"}'
+    chp:
+      networkPolicy:
+        enabled: true
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
+    https:
+      # TLS terminates at the Google load balancer.
+      enabled: false
+
+  ingress:
+    enabled: true
+    ingressClassName: gce
+    annotations:
+      kubernetes.io/ingress.allow-http: "true"
+      networking.gke.io/managed-certificates: airflow-dev-platform-cert
+      networking.gke.io/v1beta1.FrontendConfig: airflow-dev-platform-frontend
+      # Uncomment once platform.gke.staticIpName is reserved:
+      # kubernetes.io/ingress.global-static-ip-name: airflow-platform-ip
+    hosts: []   # set by scripts/deploy.sh --domain
+    pathType: Prefix
+
+  # -------------------------------------------------------------------------
+  # Workspace pods
+  # -------------------------------------------------------------------------
+  singleuser:
+    image:
+      # Overridden per environment with an immutable digest. Never `latest`.
+      name: REPLACE_ME/airflow-workspace
+      tag: "3.3.2"
+      pullPolicy: IfNotPresent
+
+    # =====================================================================
+    # WORKSPACE SIZE
+    #
+    # The requested default: 1 CPU and 16 GB of memory per user pod.
+    #
+    # guarantee == limit puts the pod in the Guaranteed QoS class, so a busy
+    # neighbour cannot evict it and a runaway DAG cannot starve the node.
+    #
+    # To change it, override these four values -- nothing else reads them:
+    #   helm ... --set jupyterhub.singleuser.cpu.limit=2 \
+    #            --set jupyterhub.singleuser.cpu.guarantee=2 \
+    #            --set jupyterhub.singleuser.memory.limit=32G \
+    #            --set jupyterhub.singleuser.memory.guarantee=32G
+    # or, more usefully, edit environments/<env>.values.yaml.
+    # scripts/deploy.sh --cpu / --memory do the same thing.
+    #
+    # Give users a choice of sizes instead by populating `profileList` below;
+    # a profile's kubespawner_override wins over these defaults.
+    # =====================================================================
+    cpu:
+      limit: 1
+      guarantee: 1
+    memory:
+      limit: 16G
+      guarantee: 16G
+
+    # Optional per-user size picker. Empty means every user gets the size
+    # above with no prompt at spawn time. See docs/operations.md for a
+    # worked example.
+    profileList: []
+
+    # Matches the uid/gid baked into images/workspace/Dockerfile.
+    uid: 1000
+    fsGid: 1000
+    allowPrivilegeEscalation: false
+
+    # Run the workspace bootstrap, which materialises the volume, migrates the
+    # per-user SQLite DB and then execs jupyterhub-singleuser.
+    cmd:
+      - /srv/workspace/bin/start.sh
+    defaultUrl: /lab
+
+    storage:
+      type: dynamic
+      # AIRFLOW_HOME. DAGs, logs, plugins, notebooks, editor state and the
+      # per-user Airflow SQLite database all live here and survive a restart.
+      homeMountPath: /opt/airflow
+      capacity: 20Gi
+      dynamic:
+        # pd-balanced. Use a StorageClass with allowVolumeExpansion so a full
+        # workspace can be grown without a migration.
+        storageClass: premium-rwo
+
+    extraEnv:
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      # LocalExecutor gives real parallelism inside the pod; the CPU limit is
+      # what bounds it.
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__PARALLELISM: "8"
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "8"
+      # Development workspace: a DAG file change should show up quickly.
+      AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "15"
+      AIRFLOW__API__EXPOSE_CONFIG: "False"
+      AIRFLOW__API__EXPOSE_STACKTRACE: "False"
+      # Seed the example DAG into an empty DAGs folder on first spawn.
+      WORKSPACE_SEED_EXAMPLES: "true"
+      # Leave false to keep a per-workspace generated Airflow UI password.
+      WORKSPACE_AIRFLOW_NO_LOGIN: "false"
+
+    networkPolicy:
+      enabled: true
+      egressAllowRules:
+        # No path to the GCE metadata server: a workspace must not be able to
+        # mint tokens for the node's service account.
+        cloudMetadataServer: false
+        dnsPortsCloudMetadataServer: true
+        dnsPortsKubeSystemNamespace: true
+        dnsPortsPrivateIPs: true
+        # Public internet, for pip/Git/APIs. Set to false and add explicit
+        # egress rules below for a locked-down environment.
+        nonPrivateIPs: true
+        # Blocks reaching other workloads in the VPC, including other
+        # workspaces, by default.
+        privateIPs: false
+
+    cloudMetadata:
+      # The iptables method needs a privileged init container, which the
+      # restricted Pod Security Standard forbids. The NetworkPolicy rule above
+      # does the same job -- it requires a NetworkPolicy-capable cluster
+      # (GKE Dataplane V2 or Calico). See docs/gcp-setup.md.
+      blockWithIptables: false
+
+    # Image pulls of an Airflow + VS Code image are not fast on a cold node.
+    startTimeout: 600
+
+    extraPodConfig:
+      automountServiceAccountToken: false
+
+  # -------------------------------------------------------------------------
+  # Scheduling — keep workspaces off the nodes running the control plane
+  # -------------------------------------------------------------------------
+  scheduling:
+    userScheduler:
+      enabled: true
+    podPriority:
+      enabled: true
+    userPlaceholder:
+      # Raise to keep N workspace-sized slots warm so a spawn does not wait
+      # for the cluster autoscaler. Each placeholder costs a full 1 CPU / 16G.
+      enabled: true
+      replicas: 0
+    corePods:
+      nodeAffinity:
+        matchNodePurpose: require
+    userPods:
+      nodeAffinity:
+        matchNodePurpose: require
+
+  prePuller:
+    # Pull the workspace image onto every user node ahead of time.
+    hook:
+      enabled: true
+    continuous:
+      enabled: true
+
+  # -------------------------------------------------------------------------
+  # Idle culling — reclaim capacity, and bound how long a session lives
+  # -------------------------------------------------------------------------
+  cull:
+    enabled: true
+    # Stop a workspace after 1 hour with no kernel or browser activity.
+    # A running Airflow scheduler does not by itself count as activity.
+    timeout: 3600
+    every: 300
+    # Hard ceiling on a single session: 12 hours. Bounds how long a revoked
+    # user's pod can outlive their access.
+    maxAge: 43200
+    users: false
+    adminUsers: true
+
+  debug:
+    enabled: false

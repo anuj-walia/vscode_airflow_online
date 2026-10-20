@@ -1,0 +1,134 @@
+# ===========================================================================
+# environments/prod.values.yaml — production GKE environment
+#
+#   scripts/deploy.sh --env prod \
+#     --domain airflow.example.com \
+#     --image europe-west1-docker.pkg.dev/PROJECT/airflow/workspace@sha256:...
+#
+# Nothing here contains a secret. OIDC client credentials come from the
+# `airflow-platform-oidc` Secret (scripts/create-oidc-secret.sh).
+# ===========================================================================
+
+platform:
+  domain: ""          # set at deploy time
+
+  resourceQuota:
+    enabled: true
+    # 24 CPU / 340Gi is ~20 concurrent 1-CPU/16G workspaces plus the Hub,
+    # proxy and user-scheduler. Raise alongside the node pool's max size.
+    hard:
+      requests.cpu: "24"
+      requests.memory: 340Gi
+      limits.cpu: "24"
+      limits.memory: 340Gi
+      persistentvolumeclaims: "60"
+      count/pods: "60"
+
+  gke:
+    enabled: true
+    # Reserve first:
+    #   gcloud compute addresses create airflow-platform-ip --global
+    staticIpName: airflow-platform-ip
+    managedCertificate:
+      enabled: true
+    backendTimeoutSeconds: 3600
+
+jupyterhub:
+  hub:
+    db:
+      # Hub state on a PVC is a single-zone dependency. For a platform with an
+      # availability target, point this at Cloud SQL instead:
+      #
+      #   type: postgres
+      #   url: postgresql+psycopg2://hub@127.0.0.1:5432/jupyterhub
+      #
+      # together with a Cloud SQL Auth Proxy sidecar in hub.extraContainers and
+      # a Workload Identity binding. See docs/gcp-setup.md.
+      type: sqlite-pvc
+      pvc:
+        storage: 8Gi
+        storageClassName: premium-rwo
+
+    extraEnv:
+      PLATFORM_DOMAIN: ""
+      OIDC_ALLOWED_GROUPS: "airflow-platform-users"
+      OIDC_OPERATOR_GROUPS: "airflow-platform-admins"
+      OIDC_ALLOW_ALL_AUTHENTICATED: "false"
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+
+  proxy:
+    chp:
+      pdb:
+        enabled: true
+        minAvailable: 1
+      resources:
+        requests:
+          cpu: 500m
+          memory: 512Mi
+        limits:
+          cpu: "2"
+          memory: 1Gi
+
+  singleuser:
+    image:
+      # ALWAYS a digest in production. scripts/deploy.sh --image resolves the
+      # tag you built to its digest and sets it here.
+      name: REPLACE_ME/airflow-workspace
+      tag: "3.3.2"
+      pullPolicy: IfNotPresent
+
+    # ---------------------------------------------------------------------
+    # The agreed production workspace size: 1 CPU, 16 GB.
+    # Change these four values to resize; nothing else needs to change.
+    # ---------------------------------------------------------------------
+    cpu:
+      limit: 1
+      guarantee: 1
+    memory:
+      limit: 16G
+      guarantee: 16G
+
+    storage:
+      capacity: 20Gi
+      dynamic:
+        storageClass: premium-rwo
+
+    networkPolicy:
+      enabled: true
+      egressAllowRules:
+        cloudMetadataServer: false
+        dnsPortsCloudMetadataServer: true
+        dnsPortsKubeSystemNamespace: true
+        dnsPortsPrivateIPs: true
+        nonPrivateIPs: true
+        privateIPs: false
+
+  scheduling:
+    userScheduler:
+      enabled: true
+    podPriority:
+      enabled: true
+    userPlaceholder:
+      enabled: true
+      # One warm 1-CPU/16G slot, so the first login after a scale-down does
+      # not wait on the cluster autoscaler. Costs one idle node's worth.
+      replicas: 1
+    corePods:
+      nodeAffinity:
+        matchNodePurpose: require
+    userPods:
+      nodeAffinity:
+        matchNodePurpose: require
+
+  cull:
+    enabled: true
+    timeout: 3600     # 1 hour idle
+    every: 300
+    maxAge: 43200     # 12 hours absolute

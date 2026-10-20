@@ -1,0 +1,72 @@
+{{- include "airflow-dev-platform.validate" . }}
+{{- if .Values.platform.gke.enabled }}
+---
+# ---------------------------------------------------------------------------
+# BackendConfig — how the Google load balancer treats the JupyterHub proxy.
+#
+# Referenced from jupyterhub.proxy.service.annotations
+# ("cloud.google.com/backend-config").
+# ---------------------------------------------------------------------------
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ include "airflow-dev-platform.backendConfigName" . }}
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+spec:
+  healthCheck:
+    # The default health check probes "/", which the proxy answers with a
+    # redirect to the IdP. Probe the Hub's own health endpoint instead, or the
+    # backend flaps between healthy and unhealthy.
+    type: HTTP
+    requestPath: /hub/health
+    port: 8000
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+  # JupyterLab holds websockets open; the 30s LB default would sever them.
+  timeoutSec: {{ .Values.platform.gke.backendTimeoutSeconds }}
+  connectionDraining:
+    drainingTimeoutSec: 60
+  # Pin a browser session to one proxy replica.
+  sessionAffinity:
+    affinityType: GENERATED_COOKIE
+    affinityCookieTtlSec: 3600
+  logging:
+    enable: true
+    sampleRate: 1.0
+---
+# ---------------------------------------------------------------------------
+# FrontendConfig — force HTTPS.
+# ---------------------------------------------------------------------------
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: {{ include "airflow-dev-platform.frontendConfigName" . }}
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+spec:
+  redirectToHttps:
+    enabled: true
+    responseCodeName: MOVED_PERMANENTLY_DEFAULT
+{{- if .Values.platform.gke.managedCertificate.enabled }}
+---
+# ---------------------------------------------------------------------------
+# ManagedCertificate — Google provisions and renews the TLS certificate.
+#
+# Provisioning only completes once platform.domain resolves publicly to the
+# ingress address, and can take up to ~20 minutes. Watch it with:
+#   kubectl -n <ns> describe managedcertificate {{ include "airflow-dev-platform.certificateName" . }}
+# ---------------------------------------------------------------------------
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: {{ include "airflow-dev-platform.certificateName" . }}
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+spec:
+  domains:
+    - {{ .Values.platform.domain | quote }}
+{{- end }}
+{{- end }}
