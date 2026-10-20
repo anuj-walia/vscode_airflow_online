@@ -25,6 +25,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -37,6 +38,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 AIRFLOW_HOME = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
 LOG_DIR = os.path.join(AIRFLOW_HOME, "logs", "workspace")
+STATE_DIR = os.path.join(AIRFLOW_HOME, ".airflow")
+# The user's chosen DAGs folder, one absolute path per file. Lives on the PVC so
+# the choice survives a pod restart.
+DAGS_STATE_FILE = os.path.join(STATE_DIR, "dags_folder")
+# Sourced from ~/.bashrc so terminal `airflow ...` commands agree with the
+# services about which folder is active.
+ENV_FILE = os.path.join(STATE_DIR, "workspace.env")
 PORT = int(os.environ.get("WORKSPACE_SERVICES_PORT", "8999"))
 BIND = os.environ.get("WORKSPACE_SERVICES_BIND", "127.0.0.1")
 AIRFLOW_BIN = os.environ.get("AIRFLOW_BIN", "/opt/venv/bin/airflow")
@@ -66,6 +74,7 @@ class Service:
     last_exit: int | None = None
     started_at: float | None = None
     give_up: bool = False
+    stop_requested: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
@@ -111,6 +120,67 @@ SERVICES: dict[str, Service] = {
 
 _shutting_down = threading.Event()
 
+# Directories never offered as DAG project suggestions.
+_SCAN_SKIP = {"logs", "plugins", "node_modules", "site-packages", "__pycache__"}
+
+
+def default_dags_folder() -> str:
+    return os.environ.get("AIRFLOW__CORE__DAGS_FOLDER", os.path.join(AIRFLOW_HOME, "dags"))
+
+
+def current_dags_folder() -> str:
+    """The folder the services should parse: the user's choice, else the default."""
+    try:
+        with open(DAGS_STATE_FILE, encoding="utf-8") as fh:
+            chosen = fh.read().strip()
+        if chosen:
+            return chosen
+    except OSError:
+        pass
+    return default_dags_folder()
+
+
+def _inside(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def validate_dags_folder(raw: str) -> tuple[str | None, str | None]:
+    """Return (resolved_path, None) or (None, error message)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None, "Enter a folder path."
+    home = os.path.realpath(AIRFLOW_HOME)
+    expanded = os.path.expanduser(raw)
+    if not os.path.isabs(expanded):
+        expanded = os.path.join(home, expanded)
+    path = os.path.realpath(expanded)
+    if not os.path.isdir(path):
+        return None, f"{path} is not an existing directory."
+    if not _inside(path, home):
+        return None, f"The folder must be inside {home} (your persistent volume)."
+    for reserved in (os.path.join(home, ".airflow"), os.path.join(home, "logs")):
+        if _inside(path, reserved):
+            return None, f"{path} is reserved for workspace state and cannot hold DAGs."
+    return path, None
+
+
+def suggest_dags_folders(limit: int = 50) -> list[str]:
+    """Directories named `dags` up to three levels under AIRFLOW_HOME."""
+    found: list[str] = []
+    base_depth = AIRFLOW_HOME.rstrip(os.sep).count(os.sep)
+    for root, dirs, _files in os.walk(AIRFLOW_HOME):
+        dirs[:] = sorted(
+            d for d in dirs
+            if not d.startswith(".") and d not in _SCAN_SKIP and not d.endswith(".egg-info")
+        )
+        if root.count(os.sep) - base_depth >= 3:
+            dirs[:] = []
+        if os.path.basename(root) == "dags":
+            found.append(root)
+            if len(found) >= limit:
+                break
+    return found
+
 
 def _roll_log(path: str) -> None:
     try:
@@ -139,7 +209,7 @@ def _supervise(service: Service) -> None:
                     service.argv,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
-                    env=os.environ.copy(),
+                    env={**os.environ, "AIRFLOW__CORE__DAGS_FOLDER": current_dags_folder()},
                     cwd=AIRFLOW_HOME,
                     start_new_session=True,
                 )
@@ -156,7 +226,7 @@ def _supervise(service: Service) -> None:
             service.last_exit = exit_code
             log_file.write(f"===== {service.name} exited with {exit_code} =====\n")
 
-        if _shutting_down.is_set() or exit_code == 0:
+        if _shutting_down.is_set() or service.stop_requested or exit_code == 0:
             return
 
         service.restarts += 1
@@ -184,6 +254,7 @@ def start(service: Service) -> None:
             return
         service.restarts = 0
         service.give_up = False
+        service.stop_requested = False
         service.thread = threading.Thread(
             target=_supervise, args=(service,), daemon=True, name=f"supervise-{service.name}"
         )
@@ -191,6 +262,8 @@ def start(service: Service) -> None:
 
 
 def stop(service: Service, timeout: float = 30.0) -> None:
+    # Tell the supervisor thread this exit is deliberate so it doesn't restart it.
+    service.stop_requested = True
     proc = service.process
     if proc is None or proc.poll() is not None:
         service.process = None
@@ -211,6 +284,9 @@ def stop(service: Service, timeout: float = 30.0) -> None:
             proc.kill()
         proc.wait(timeout=10)
     service.process = None
+    thread = service.thread
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(timeout=5)
 
 
 def shutdown(*_args) -> None:
@@ -220,6 +296,37 @@ def shutdown(*_args) -> None:
     print("[services] shutting down Airflow services", file=sys.stderr)
     for service in SERVICES.values():
         stop(service)
+
+
+def _write_atomic(path: str, content: str) -> None:
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(content)
+    os.replace(tmp, path)
+
+
+def set_dags_folder(raw: str, restart: bool = True) -> tuple[str | None, str | None]:
+    """Persist a new DAGs folder and restart the Airflow children against it.
+
+    Returns (resolved_path, None) on success or (None, error).
+    """
+    path, error = validate_dags_folder(raw)
+    if error:
+        return None, error
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    _write_atomic(DAGS_STATE_FILE, path + "\n")
+    _write_atomic(ENV_FILE, f"export AIRFLOW__CORE__DAGS_FOLDER={shlex.quote(path)}\n")
+    if restart:
+        # Only restart what was running; a service the user stopped on purpose
+        # stays stopped but will use the new folder when started.
+        was_running = [s for s in SERVICES.values() if s.running or s.give_up]
+        for service in SERVICES.values():
+            stop(service)
+        # dag-processor first so the new folder is parsed before the scheduler looks.
+        for service in sorted(was_running, key=lambda s: s.name != "dag-processor"):
+            service.thread = None
+            start(service)
+    return path, None
 
 
 def tail(path: str, lines: int = TAIL_LINES) -> str:
@@ -287,6 +394,13 @@ PAGE = """<!DOCTYPE html>
   pre {{ background:#0e1016; border:1px solid #1f2430; border-radius:8px; padding:14px;
          font-family:ui-monospace,'SF Mono',monospace; font-size:12px; line-height:1.45;
          max-height:460px; overflow:auto; white-space:pre-wrap; word-wrap:break-word; }}
+  .dags {{ background:#1a1d26; border:1px solid #262b38; border-radius:10px;
+           padding:16px; margin:0 0 22px; font-size:13px; }}
+  .dags input[type=text] {{ background:#0e1016; border:1px solid #333b4d; color:#7ec9ff;
+           padding:6px 10px; border-radius:6px; width:min(560px,100%); font-size:12px;
+           font-family:ui-monospace,'SF Mono',monospace; }}
+  .dags .hint {{ color:#7d8799; font-size:12px; margin-top:8px; }}
+  .err {{ color:#ff6b7a; margin-top:8px; font-size:12px; }}
   .tabs {{ margin:26px 0 0; }}
   .tabs a {{ color:#9aa3b2; text-decoration:none; font-size:12px; padding:5px 12px;
              border:1px solid #262b38; border-radius:6px; margin-right:6px; display:inline-block; }}
@@ -295,7 +409,18 @@ PAGE = """<!DOCTYPE html>
 </head>
 <body>
   <h1>Airflow Services</h1>
-  <p class="sub">DAGs folder: <strong>{dags_folder}</strong> &middot; auto-refreshes every 10s</p>
+  <p class="sub">auto-refreshes every 10s</p>
+  <div class="dags">
+    <form method="post" action="{action_prefix}dags-folder">
+      <label for="dags_folder"><strong>DAGs folder</strong></label><br>
+      <input type="text" id="dags_folder" name="dags_folder" value="{dags_folder}" list="dags-suggestions" autocomplete="off">
+      <datalist id="dags-suggestions">{suggestions}</datalist>
+      <button>Switch &amp; restart</button>
+    </form>
+    {error}
+    <div class="hint">Restarts the scheduler, dag-processor and triggerer against this folder
+    (e.g. a git clone under your volume). Remembered across restarts.</div>
+  </div>
   {credentials}
   <div class="grid">{cards}</div>
   <h3>Logs</h3>
@@ -352,28 +477,42 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path.rstrip("/")
         if path.endswith("/healthz"):
-            return self._send_json(
-                HTTPStatus.OK,
-                {
-                    name: {
-                        "state": svc.state,
-                        "restarts": svc.restarts,
-                        "last_exit": svc.last_exit,
-                        "uptime_seconds": (
-                            round(time.time() - svc.started_at) if svc.started_at and svc.running else 0
-                        ),
-                    }
-                    for name, svc in SERVICES.items()
-                },
-            )
+            payload = {
+                name: {
+                    "state": svc.state,
+                    "restarts": svc.restarts,
+                    "last_exit": svc.last_exit,
+                    "uptime_seconds": (
+                        round(time.time() - svc.started_at) if svc.started_at and svc.running else 0
+                    ),
+                }
+                for name, svc in SERVICES.items()
+            }
+            payload["dags_folder"] = current_dags_folder()
+            return self._send_json(HTTPStatus.OK, payload)
         return self._send_page()
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path.rstrip("/")
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8")
-        name = urllib.parse.parse_qs(body).get("service", [""])[0]
+        form = urllib.parse.parse_qs(body)
+        name = form.get("service", [""])[0]
         service = SERVICES.get(name)
+
+        if path.endswith("/dags-folder"):
+            resolved, error = set_dags_folder(form.get("dags_folder", [""])[0])
+            if "application/json" in self.headers.get("Accept", ""):
+                if error:
+                    return self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
+                return self._send_json(HTTPStatus.OK, {"dags_folder": resolved})
+            target = self._action_prefix().rsplit("/", 2)[0] + "/"
+            if error:
+                target += "?" + urllib.parse.urlencode({"error": error})
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", target)
+            self.end_headers()
+            return
 
         if service is not None:
             if path.endswith("/start"):
@@ -441,10 +580,17 @@ class Handler(BaseHTTPRequestHandler):
                 ),
             )
 
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        error_msg = qs.get("error", [""])[0]
+        suggestions = "".join(
+            f'<option value="{html.escape(d, quote=True)}">' for d in suggest_dags_folders()
+        )
+
         page = PAGE.format(
-            dags_folder=html.escape(
-                os.environ.get("AIRFLOW__CORE__DAGS_FOLDER", os.path.join(AIRFLOW_HOME, "dags"))
-            ),
+            action_prefix=html.escape(prefix),
+            dags_folder=html.escape(current_dags_folder(), quote=True),
+            suggestions=suggestions,
+            error=f'<div class="err">{html.escape(error_msg)}</div>' if error_msg else "",
             credentials=credentials_html,
             cards="".join(cards),
             tabs=tabs,

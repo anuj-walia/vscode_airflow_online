@@ -1,0 +1,63 @@
+#!/opt/venv/bin/python
+"""
+workspace-dags — show or change the DAGs folder the workspace services use.
+
+    workspace-dags                  print the active DAGs folder
+    workspace-dags <path>           switch to <path> and restart the scheduler,
+                                    dag-processor and triggerer against it
+
+Talks to workspace_services.py on loopback; the choice is remembered across
+restarts. Stdlib only.
+"""
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+PORT = os.environ.get("WORKSPACE_SERVICES_PORT", "8999")
+BASE = f"http://127.0.0.1:{PORT}/"
+AIRFLOW_HOME = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) > 1 or (argv and argv[0] in ("-h", "--help")):
+        print(__doc__.strip())
+        return 0 if argv and argv[0] in ("-h", "--help") else 2
+
+    try:
+        if not argv:
+            with urllib.request.urlopen(BASE + "healthz", timeout=10) as resp:
+                print(json.load(resp)["dags_folder"])
+            return 0
+
+        path = os.path.abspath(os.path.expanduser(argv[0]))
+        req = urllib.request.Request(
+            BASE + "dags-folder",
+            data=urllib.parse.urlencode({"dags_folder": path}).encode(),
+            headers={"Accept": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            chosen = json.load(resp)["dags_folder"]
+    except urllib.error.HTTPError as exc:
+        try:
+            message = json.load(exc)["error"]
+        except (ValueError, KeyError):
+            message = f"HTTP {exc.code}"
+        print(f"workspace-dags: {message}", file=sys.stderr)
+        return 1
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"workspace-dags: cannot reach the services supervisor on port {PORT} ({exc}).\n"
+              "Open 'Airflow Services' in the launcher once to start it.", file=sys.stderr)
+        return 1
+
+    print(f"DAGs folder is now {chosen}; scheduler, dag-processor and triggerer restarted.")
+    print(f"Open a new terminal, or run: source {AIRFLOW_HOME}/.airflow/workspace.env")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
