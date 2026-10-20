@@ -26,6 +26,9 @@ Browser
 Everything but JupyterLab binds to loopback, so reaching the Airflow UI or VS
 Code requires a JupyterHub session for that specific user.
 
+See [docs/architecture.md](docs/architecture.md) for diagrams and
+[docs/local-setup.md](docs/local-setup.md) to run on Docker Desktop or OrbStack.
+
 ## Quick start
 
 ```bash
@@ -125,6 +128,26 @@ The JupyterLab launcher has three entries:
 `/opt/airflow` is the user's PVC. DAGs, logs, plugins, notebooks, editor
 state and the Airflow SQLite metadata database all live there and survive a
 restart, a reschedule and an idle cull.
+
+### Working on multiple projects
+
+The services parse one DAGs folder at a time. It defaults to `/opt/airflow/dags`,
+but you can point it at any directory on your volume, for example a project you
+just cloned:
+
+```bash
+git clone <repo> /opt/airflow/projects/billing
+workspace-dags /opt/airflow/projects/billing/dags   # switch + restart services
+workspace-dags                                      # print the active folder
+```
+
+or type the path into the **DAGs folder** box on the Airflow Services page
+(clones under your volume are offered as suggestions). The scheduler,
+dag-processor and triggerer restart against the new folder, and the choice is
+remembered across restarts. The previous project's DAGs go stale in the UI;
+their run history stays in your metadata database. New terminals pick the
+folder up from `~/.airflow/workspace.env`. Only the DAGs folder switches, not
+`plugins/`.
 
 ## Development
 

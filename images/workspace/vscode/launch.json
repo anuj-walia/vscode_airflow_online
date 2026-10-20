@@ -1,0 +1,36 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Airflow: Test Task",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/venv/bin/airflow",
+            "args": ["tasks", "test", "${input:dagId}", "${input:taskId}", "${input:logicalDate}"],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Airflow: Test DAG",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/venv/bin/airflow",
+            "args": ["dags", "test", "${input:dagId}", "${input:logicalDate}"],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ],
+    "inputs": [
+        {"id": "dagId", "type": "promptString", "description": "DAG ID", "default": "my_first_dag"},
+        {"id": "taskId", "type": "promptString", "description": "Task ID", "default": "python_task"},
+        {"id": "logicalDate", "type": "promptString", "description": "Logical date (YYYY-MM-DD)", "default": "2026-01-01"}
+    ]
+}

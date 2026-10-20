@@ -94,8 +94,10 @@ RUN set -eux; \
 COPY --chown=root:root bin/ /srv/workspace/bin/
 COPY --chown=root:root icons/ /srv/workspace/icons/
 COPY --chown=root:root examples/ /srv/workspace/examples/
+COPY --chown=root:root vscode/launch.json /srv/workspace/vscode/launch.json
 COPY --chown=root:root jupyter_server_config.py ${VIRTUAL_ENV}/etc/jupyter/jupyter_server_config.py
-RUN chmod 0755 /srv/workspace/bin/*.sh /srv/workspace/bin/*.py
+RUN chmod 0755 /srv/workspace/bin/*.sh /srv/workspace/bin/*.py /srv/workspace/bin/workspace-dags \
+    && ln -s /srv/workspace/bin/workspace-dags /usr/local/bin/workspace-dags
 
 # VS Code settings and extensions are image content. code-server resolves its
 # user-data and extensions directories from XDG_DATA_HOME, which bin/start.sh

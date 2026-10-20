@@ -49,6 +49,23 @@ if [[ ! -f "${CODE_USER_DIR}/settings.json" ]]; then
     cp "${WORKSPACE_ASSETS}/vscode/settings.json" "${CODE_USER_DIR}/settings.json"
 fi
 
+# Terminals and debug sessions inherit the image's default DAGs folder.
+# `workspace-dags <path>` records the user's choice in workspace.env; source it
+# from .bashrc and .profile (once) so `airflow ...` in a terminal matches the services.
+BASHRC_LINE='[ -f "${HOME}/.airflow/workspace.env" ] && . "${HOME}/.airflow/workspace.env"  # workspace-dags'
+# .profile covers login shells (some terminals start `bash -l`), which do not read .bashrc.
+for rc in "${HOME}/.bashrc" "${HOME}/.profile"; do
+    if ! grep -qsF '# workspace-dags' "${rc}"; then
+        printf '%s\n' "${BASHRC_LINE}" >> "${rc}"
+    fi
+done
+
+# Seed the Airflow debug profiles into the workspace folder, once.
+if [[ ! -f "${AIRFLOW_HOME}/.vscode/launch.json" ]]; then
+    mkdir -p "${AIRFLOW_HOME}/.vscode"
+    cp "${WORKSPACE_ASSETS}/vscode/launch.json" "${AIRFLOW_HOME}/.vscode/launch.json"
+fi
+
 # Seed the extensions built into the image. code-server resolves its extensions
 # directory from XDG_DATA_HOME, which now points at the PVC, so without this the
 # workspace would start with no Python extension. Copy only into an empty
