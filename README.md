@@ -33,6 +33,8 @@ See [docs/architecture.md](docs/architecture.md) for diagrams and
 
 ```bash
 # 1. Cluster, registry, static IP, DNS — docs/gcp-setup.md
+#    then point kubectl at it:
+gcloud container clusters get-credentials CLUSTER --region REGION
 # 2. Build and push the workspace image
 scripts/build-image.sh --registry europe-west1-docker.pkg.dev/PROJECT/airflow --push
 

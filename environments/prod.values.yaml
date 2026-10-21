@@ -63,6 +63,12 @@ jupyterhub:
         cpu: "2"
         memory: 2Gi
 
+  ingress:
+    annotations:
+      # platform.gke.staticIpName is not read by any template; this annotation
+      # is what binds the Ingress to the reserved address (docs/gcp-setup.md, step 4).
+      kubernetes.io/ingress.global-static-ip-name: airflow-platform-ip
+
   proxy:
     chp:
       pdb:

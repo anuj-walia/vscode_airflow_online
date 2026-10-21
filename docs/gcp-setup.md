@@ -3,6 +3,20 @@
 Everything the platform needs from Google Cloud, in the order you need it.
 Values in `ALL_CAPS` are yours to choose.
 
+## 0. Prerequisites
+
+On the machine you deploy from:
+
+| Tool | Used for |
+| :-- | :-- |
+| `gcloud` (authenticated: `gcloud auth login`) | everything below |
+| `gke-gcloud-auth-plugin` | lets `kubectl` and `helm` authenticate to GKE (`gcloud components install gke-gcloud-auth-plugin`) |
+| `kubectl`, `helm` 3.x | `scripts/deploy.sh` checks for both |
+| `docker` with BuildKit | `scripts/build-image.sh` (skip if you build in Cloud Build, step 5) |
+
+You also need a domain you can add an `A` record to, and an OIDC identity
+provider ([oidc-setup.md](oidc-setup.md)).
+
 ```bash
 export PROJECT_ID=my-project
 export REGION=europe-west1
@@ -83,6 +97,15 @@ If you would rather not label nodes at all, set both
 `scheduling.userPods.nodeAffinity.matchNodePurpose` to `prefer`
 (`environments/dev.values.yaml` already does).
 
+Point `kubectl` at the new cluster. `scripts/deploy.sh` and
+`scripts/create-oidc-secret.sh` act on whatever your current context is, so
+check it before running either:
+
+```bash
+gcloud container clusters get-credentials "$CLUSTER" --region "$REGION"
+kubectl config current-context     # gke_<project>_<region>_<cluster>
+```
+
 ## 3. Artifact Registry
 
 ```bash
@@ -123,9 +146,15 @@ gcloud compute addresses create airflow-platform-ip --global
 gcloud compute addresses describe airflow-platform-ip --global --format='value(address)'
 ```
 
-Create an `A` record for `$DOMAIN` pointing at that address, then uncomment
-the `kubernetes.io/ingress.global-static-ip-name` annotation in
-`charts/airflow-dev-platform/values.yaml` (or set it per environment).
+Create an `A` record for `$DOMAIN` pointing at that address.
+
+`environments/prod.values.yaml` already binds the Ingress to a reserved address
+named `airflow-platform-ip` through the
+`kubernetes.io/ingress.global-static-ip-name` annotation. If you chose a
+different name above, change it there. Set the same annotation under
+`jupyterhub.ingress.annotations` in `environments/dev.values.yaml` if you want
+a static IP for dev. (`platform.gke.staticIpName` is not read by any template;
+the annotation is the only thing that takes effect.)
 
 ## 5. Build and push the workspace image
 
@@ -135,9 +164,28 @@ scripts/build-image.sh \
   --push
 ```
 
-The script builds `linux/amd64` by default, runs a smoke test inside the
-image, and prints the reference to deploy. On an Apple Silicon machine the
-cross-build is emulated and slow; a CI runner is the better place for it.
+The script builds `linux/amd64` by default (GKE x86 nodes), runs a smoke test
+inside the image, pushes it, and prints the pushed digest. The tag it pushes is
+`<airflow version>-<git sha>` (with `-dirty` appended if the working tree has
+uncommitted changes), and the Airflow, Python and code-server versions come
+from `VERSIONS.env`. Build from a clean commit for anything you deploy. If
+your node pool is Arm, add `--platform linux/arm64`.
+
+On an Apple Silicon machine the `amd64` cross-build is emulated and slow. Build
+in Cloud Build instead; it needs no local Docker and builds natively on
+`amd64`:
+
+```bash
+source VERSIONS.env
+TAG="${AIRFLOW_VERSION}-$(git rev-parse --short=12 HEAD)"
+gcloud builds submit images/workspace \
+  --tag "${REGION}-docker.pkg.dev/${PROJECT_ID}/airflow/airflow-workspace:${TAG}"
+```
+
+That path skips `build-image.sh`, so there is no smoke test and the build uses
+the Dockerfile's own `ARG` defaults rather than `VERSIONS.env`. They match
+today; if you bump a version in `VERSIONS.env`, update the `ARG` defaults in
+`images/workspace/Dockerfile` too, or build with `scripts/build-image.sh`.
 
 ## 6. OIDC credentials
 
@@ -159,6 +207,17 @@ scripts/deploy.sh \
   --domain "$DOMAIN" \
   --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/airflow/airflow-workspace:3.3.2-<sha>"
 ```
+
+Use the **tag** from step 5 here. Because the repository was created with
+`--immutable-tags`, it can never point at different bytes, which is the
+guarantee a digest would give, and it keeps the image pre-puller working so
+first spawns on a warm node are fast. You can instead pass the
+`...@sha256:...` digest that `build-image.sh` prints; `deploy.sh` accepts it
+but has to switch the pre-puller off, so the first spawn on a cold node waits
+for the image pull.
+
+Use `--dry-run` first to render and validate without applying, and `--diff`
+to see what an upgrade would change.
 
 Then wait for the certificate. This is the slowest step and the one most
 often mistaken for a failure — 15 to 20 minutes is normal, and it cannot
