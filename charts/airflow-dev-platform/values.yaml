@@ -42,23 +42,40 @@ platform:
       cpu: "8"
       memory: 64Gi
 
+  # The chart is cloud-neutral by default: nothing below this line assumes a
+  # cloud, and the ingress annotations, StorageClass names and proxy Service
+  # annotations live in environments/*.values.yaml. Exactly one of `gke` and
+  # `aws` may be enabled; leave both off if you terminate TLS with
+  # ingress-nginx + cert-manager or front the platform with IAP, and configure
+  # jupyterhub.ingress yourself.
+
   # GKE-native ingress: external HTTP(S) load balancer, Google-managed TLS
   # certificate, HTTP->HTTPS redirect, and a health check that targets the
-  # Hub's own endpoint instead of "/".
-  #
-  # Set enabled: false if you terminate TLS with ingress-nginx + cert-manager
-  # or front the platform with IAP; then configure jupyterhub.ingress yourself.
+  # Hub's own endpoint instead of "/". Enabled by environments/{dev,prod}.values.yaml.
+  # To bind the Ingress to a reserved global static IP, set the
+  # kubernetes.io/ingress.global-static-ip-name annotation under
+  # jupyterhub.ingress.annotations (see environments/prod.values.yaml).
   gke:
-    enabled: true
-    # Name of a reserved global static IP (`gcloud compute addresses create
-    # ... --global`). Leave empty to let GKE allocate an ephemeral address,
-    # which changes on every ingress recreation and breaks DNS.
-    staticIpName: ""
+    enabled: false
     managedCertificate:
       enabled: true
     # Requests above this many seconds are dropped by the LB. JupyterLab's
     # websockets need a generous value.
     backendTimeoutSeconds: 3600
+
+  # AWS: an ALB provisioned by the AWS Load Balancer Controller, TLS from an
+  # ACM certificate. Enabled by environments/aws-prod.values.yaml. The ALB
+  # itself is configured by annotations under jupyterhub.ingress.annotations in
+  # that file (a subchart value cannot be templated from here); the ACM
+  # certificate ARN is supplied by scripts/deploy.sh --certificate-arn and the
+  # chart refuses to render without it.
+  aws:
+    enabled: false
+    # Create the gp3 StorageClass (EBS CSI driver) the environment file refers
+    # to. Set create: false to use a class your cluster already has.
+    storageClass:
+      create: true
+      name: gp3
 
 # ===========================================================================
 # jupyterhub — Zero to JupyterHub subchart
@@ -82,8 +99,8 @@ jupyterhub:
       type: sqlite-pvc
       pvc:
         storage: 4Gi
-        # GKE default is standard-rwo; pd-balanced is a better fit for a DB.
-        storageClassName: premium-rwo
+        # storageClassName is set per environment (premium-rwo on GKE, gp3 on
+        # AWS); unset means the cluster's default class.
 
     config:
       JupyterHub:
@@ -335,11 +352,11 @@ jupyterhub:
   # -------------------------------------------------------------------------
   proxy:
     service:
-      # NodePort, not LoadBalancer: the GKE ingress in this chart's templates
-      # is what faces the internet, so the Service must stay cluster-internal.
+      # NodePort, not LoadBalancer: the ingress is what faces the internet, so
+      # the Service must stay cluster-internal. GKE needs NodePort; the AWS
+      # environment overrides this to ClusterIP (ALB IP targets). Cloud
+      # annotations (e.g. the GKE BackendConfig) are set per environment.
       type: NodePort
-      annotations:
-        cloud.google.com/backend-config: '{"default":"airflow-dev-platform-hub"}'
     chp:
       networkPolicy:
         enabled: true
@@ -351,18 +368,13 @@ jupyterhub:
           cpu: "1"
           memory: 512Mi
     https:
-      # TLS terminates at the Google load balancer.
+      # TLS terminates at the cloud load balancer.
       enabled: false
 
+  # The ingress class and its annotations are cloud-specific and set in
+  # environments/*.values.yaml.
   ingress:
     enabled: true
-    ingressClassName: gce
-    annotations:
-      kubernetes.io/ingress.allow-http: "true"
-      networking.gke.io/managed-certificates: airflow-dev-platform-cert
-      networking.gke.io/v1beta1.FrontendConfig: airflow-dev-platform-frontend
-      # Uncomment once platform.gke.staticIpName is reserved:
-      # kubernetes.io/ingress.global-static-ip-name: airflow-platform-ip
     hosts: []   # set by scripts/deploy.sh --domain
     pathType: Prefix
 
@@ -425,9 +437,9 @@ jupyterhub:
       homeMountPath: /opt/airflow
       capacity: 20Gi
       dynamic:
-        # pd-balanced. Use a StorageClass with allowVolumeExpansion so a full
-        # workspace can be grown without a migration.
-        storageClass: premium-rwo
+        # storageClass is set per environment (premium-rwo on GKE, gp3 on
+        # AWS). Use a class with allowVolumeExpansion so a full workspace can
+        # be grown without a migration.
 
     extraEnv:
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
@@ -449,8 +461,8 @@ jupyterhub:
     networkPolicy:
       enabled: true
       egressAllowRules:
-        # No path to the GCE metadata server: a workspace must not be able to
-        # mint tokens for the node's service account.
+        # No path to the cloud metadata server (GCE metadata / AWS IMDS): a
+        # workspace must not be able to mint tokens for the node's identity.
         cloudMetadataServer: false
         dnsPortsCloudMetadataServer: true
         dnsPortsKubeSystemNamespace: true
@@ -466,7 +478,8 @@ jupyterhub:
       # The iptables method needs a privileged init container, which the
       # restricted Pod Security Standard forbids. The NetworkPolicy rule above
       # does the same job -- it requires a NetworkPolicy-capable cluster
-      # (GKE Dataplane V2 or Calico). See docs/gcp-setup.md.
+      # (GKE Dataplane V2, the EKS VPC CNI with network policy enabled, or
+      # Calico). See docs/gcp-setup.md and docs/aws-setup.md.
       blockWithIptables: false
 
     # Image pulls of an Airflow + VS Code image are not fast on a cold node.

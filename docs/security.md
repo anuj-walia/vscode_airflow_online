@@ -39,7 +39,7 @@ issuer, or a missing authorisation rule all abort startup.
 | Non-root, uid/gid 1000 | image `USER`, plus `container_security_context` |
 | No privilege escalation, all capabilities dropped, `RuntimeDefault` seccomp | `hub.extraConfig.03-workspace-security` |
 | No Kubernetes API token mounted | `automount_service_account_token: false` and `extraPodConfig` |
-| No route to the GCE metadata server | `networkPolicy.egressAllowRules.cloudMetadataServer: false` |
+| No route to the cloud metadata server (GCE metadata / AWS IMDS) | `networkPolicy.egressAllowRules.cloudMetadataServer: false`; on EKS also `disableIMDSv1` and `disablePodIMDS` on the node groups |
 | No route to other workspaces or the VPC | `egressAllowRules.privateIPs: false` |
 | Per-user volume; no `hostPath` anywhere | `singleuser.storage.type: dynamic` |
 | Guaranteed QoS, so one workspace cannot starve another | request == limit |
@@ -50,7 +50,9 @@ container, because that container requires `NET_ADMIN` and privilege
 escalation, which the restricted Pod Security Standard forbids. **This means
 isolation depends on a NetworkPolicy-enforcing dataplane.** On a cluster
 without one, the policies are accepted and ignored. See
-[gcp-setup.md](gcp-setup.md#2-gke-cluster).
+[gcp-setup.md](gcp-setup.md#2-gke-cluster). On EKS that means the VPC CNI with
+`enableNetworkPolicy: "true"` (set in `infra/aws/eksctl-cluster.yaml`); see
+[aws-setup.md](aws-setup.md#1-eks-cluster).
 
 ## Inside the workspace
 
@@ -115,11 +117,11 @@ Deliberate, and worth being explicit about:
 
 ## Pre-launch checklist
 
-- [ ] Cluster has Dataplane V2 or Calico, and NetworkPolicy enforcement is verified, not assumed
+- [ ] Cluster has Dataplane V2 (GKE), the VPC CNI with network policy (EKS) or Calico, and NetworkPolicy enforcement is verified, not assumed
 - [ ] An authenticated user outside `OIDC_ALLOWED_GROUPS` is refused
 - [ ] A user removed from the group cannot spawn after `auth_refresh_age`
-- [ ] Workspace A cannot reach workspace B, the metadata server, or the Kubernetes API
-- [ ] TLS certificate `Active`, HTTP redirects to HTTPS
+- [ ] Workspace A cannot reach workspace B, the metadata server (`curl -m 3 http://169.254.169.254/` times out on EKS), or the Kubernetes API
+- [ ] TLS certificate `Active` (GKE) or `ISSUED` (ACM), HTTP redirects to HTTPS
 - [ ] Image deployed by digest or immutable tag; `REPLACE_ME` appears nowhere
 - [ ] Hub PVC and user PVCs have a snapshot schedule, and a restore has been performed
 - [ ] `tests/test_hub_config.py` passes against the values you are shipping

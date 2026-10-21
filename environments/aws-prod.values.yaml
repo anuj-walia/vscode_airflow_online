@@ -1,0 +1,167 @@
+# ===========================================================================
+# environments/aws-prod.values.yaml — production EKS environment
+#
+#   scripts/deploy.sh --cloud aws \
+#     --domain airflow.example.com \
+#     --certificate-arn arn:aws:acm:REGION:ACCOUNT:certificate/ID \
+#     --image ACCOUNT.dkr.ecr.REGION.amazonaws.com/airflow-workspace:3.3.2-<sha>
+#
+# Nothing here contains a secret. OIDC client credentials come from the
+# `airflow-platform-oidc` Secret (scripts/create-oidc-secret.sh). Setup order is
+# in docs/aws-setup.md.
+# ===========================================================================
+
+platform:
+  domain: ""          # set at deploy time
+
+  resourceQuota:
+    enabled: true
+    # 24 CPU / 340Gi is ~20 concurrent 1-CPU/16G workspaces plus the Hub,
+    # proxy and user-scheduler. Raise alongside the workspaces node group's
+    # maxSize in infra/aws/eksctl-cluster.yaml.
+    hard:
+      requests.cpu: "24"
+      requests.memory: 340Gi
+      limits.cpu: "24"
+      limits.memory: 340Gi
+      persistentvolumeclaims: "60"
+      count/pods: "60"
+
+  gke:
+    enabled: false
+
+  aws:
+    enabled: true
+    storageClass:
+      create: true
+      name: gp3
+
+jupyterhub:
+  hub:
+    db:
+      # Hub state on an EBS volume is a single-AZ dependency. For a platform
+      # with an availability target, point this at RDS PostgreSQL instead; see
+      # docs/aws-setup.md.
+      type: sqlite-pvc
+      pvc:
+        storage: 8Gi
+        storageClassName: gp3
+
+    extraEnv:
+      PLATFORM_DOMAIN: ""
+      OIDC_ALLOWED_GROUPS: "airflow-platform-users"
+      OIDC_OPERATOR_GROUPS: "airflow-platform-admins"
+      OIDC_ALLOW_ALL_AUTHENTICATED: "false"
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+
+  proxy:
+    service:
+      # The ALB registers pod IPs directly (target-type: ip), so the Service
+      # does not need a NodePort.
+      type: ClusterIP
+    chp:
+      pdb:
+        enabled: true
+        minAvailable: 1
+      resources:
+        requests:
+          cpu: 500m
+          memory: 512Mi
+        limits:
+          cpu: "2"
+          memory: 1Gi
+
+  ingress:
+    ingressClassName: alb
+    annotations:
+      # Provisioned by the AWS Load Balancer Controller. The ACM certificate
+      # ARN (alb.ingress.kubernetes.io/certificate-arn) is added by
+      # scripts/deploy.sh --certificate-arn; the chart refuses to render without
+      # it.
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      # Health-check the Hub's own endpoint rather than "/", which would
+      # redirect and flap the target group.
+      alb.ingress.kubernetes.io/healthcheck-path: /hub/health
+      alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+      alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
+      alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+      alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+      # JupyterLab holds websockets open; the ALB default idle timeout (60s)
+      # would sever them. Pin a browser session to one proxy replica and drain
+      # connections on rollout.
+      alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
+      alb.ingress.kubernetes.io/target-group-attributes: stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=3600,deregistration_delay.timeout_seconds=60
+      # Optional: share one ALB (and one DNS target) across reinstalls.
+      # alb.ingress.kubernetes.io/group.name: airflow-platform
+
+  singleuser:
+    image:
+      # ALWAYS an immutable reference in production: an ECR repository created
+      # with imageTagMutability=IMMUTABLE makes a tag as good as a digest.
+      # scripts/deploy.sh --image sets this.
+      name: REPLACE_ME/airflow-workspace
+      tag: "3.3.2"
+      pullPolicy: IfNotPresent
+
+    # ---------------------------------------------------------------------
+    # The agreed production workspace size: 1 CPU, 16 GB.
+    # Change these four values to resize; nothing else needs to change.
+    # ---------------------------------------------------------------------
+    cpu:
+      limit: 1
+      guarantee: 1
+    memory:
+      limit: 16G
+      guarantee: 16G
+
+    storage:
+      capacity: 20Gi
+      dynamic:
+        storageClass: gp3
+
+    networkPolicy:
+      enabled: true
+      egressAllowRules:
+        # Blocks 169.254.169.254, which is IMDS on EC2: a workspace must not
+        # be able to mint credentials for the node's instance role. The node
+        # group also sets the IMDSv2 hop limit to 1 as a second layer.
+        cloudMetadataServer: false
+        dnsPortsCloudMetadataServer: true
+        dnsPortsKubeSystemNamespace: true
+        dnsPortsPrivateIPs: true
+        nonPrivateIPs: true
+        privateIPs: false
+
+  scheduling:
+    userScheduler:
+      enabled: true
+    podPriority:
+      enabled: true
+    userPlaceholder:
+      enabled: true
+      # One warm 1-CPU/16G slot, so the first login after a scale-down does
+      # not wait on the cluster autoscaler. Costs one idle node's worth.
+      replicas: 1
+    corePods:
+      nodeAffinity:
+        matchNodePurpose: require
+    userPods:
+      nodeAffinity:
+        matchNodePurpose: require
+
+  cull:
+    enabled: true
+    timeout: 3600     # 1 hour idle
+    every: 300
+    maxAge: 43200     # 12 hours absolute

@@ -153,8 +153,8 @@ named `airflow-platform-ip` through the
 `kubernetes.io/ingress.global-static-ip-name` annotation. If you chose a
 different name above, change it there. Set the same annotation under
 `jupyterhub.ingress.annotations` in `environments/dev.values.yaml` if you want
-a static IP for dev. (`platform.gke.staticIpName` is not read by any template;
-the annotation is the only thing that takes effect.)
+a static IP for dev. The annotation is the only thing that binds the Ingress to
+the address; the chart has no separate "static IP name" setting.
 
 ## 5. Build and push the workspace image
 

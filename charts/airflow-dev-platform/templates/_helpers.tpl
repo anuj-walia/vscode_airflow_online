@@ -29,19 +29,28 @@ Fail early and loudly on a configuration that would produce an unprotected or
 unreachable platform, rather than at first login.
 */}}
 {{- define "airflow-dev-platform.validate" -}}
-{{- if .Values.platform.gke.enabled }}
+{{- if and .Values.platform.gke.enabled .Values.platform.aws.enabled }}
+  {{- fail "platform.gke.enabled and platform.aws.enabled are both true; enable exactly one cloud" }}
+{{- end }}
+{{- if or .Values.platform.gke.enabled .Values.platform.aws.enabled }}
   {{- if not .Values.platform.domain }}
-    {{- fail "platform.domain must be set when platform.gke.enabled is true (use scripts/deploy.sh --domain)" }}
+    {{- fail "platform.domain must be set when a cloud ingress is enabled (use scripts/deploy.sh --domain)" }}
   {{- end }}
   {{- if not (index .Values.jupyterhub.ingress "hosts") }}
     {{- fail "jupyterhub.ingress.hosts is empty; it must contain platform.domain" }}
   {{- end }}
   {{- if not (has .Values.platform.domain .Values.jupyterhub.ingress.hosts) }}
-    {{- fail (printf "platform.domain (%s) is not in jupyterhub.ingress.hosts (%v); the managed certificate would not cover the ingress" .Values.platform.domain .Values.jupyterhub.ingress.hosts) }}
+    {{- fail (printf "platform.domain (%s) is not in jupyterhub.ingress.hosts (%v); the certificate would not cover the ingress" .Values.platform.domain .Values.jupyterhub.ingress.hosts) }}
+  {{- end }}
+{{- end }}
+{{- if .Values.platform.aws.enabled }}
+  {{- $annotations := default dict .Values.jupyterhub.ingress.annotations }}
+  {{- if not (index $annotations "alb.ingress.kubernetes.io/certificate-arn") }}
+    {{- fail "AWS needs an ACM certificate: set the alb.ingress.kubernetes.io/certificate-arn ingress annotation (scripts/deploy.sh --cloud aws --certificate-arn <arn>)" }}
   {{- end }}
 {{- end }}
 {{- if contains "REPLACE_ME" .Values.jupyterhub.singleuser.image.name }}
-  {{- fail "jupyterhub.singleuser.image.name still points at the placeholder registry; set it to your Artifact Registry image (scripts/deploy.sh --image)" }}
+  {{- fail "jupyterhub.singleuser.image.name still points at the placeholder registry; set it to your container registry image (Artifact Registry or ECR; scripts/deploy.sh --image)" }}
 {{- end }}
 {{- if contains "@sha256:" .Values.jupyterhub.singleuser.image.name }}
   {{/*

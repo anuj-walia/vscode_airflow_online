@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# deploy.sh — install or upgrade the platform on GKE.
+# deploy.sh — install or upgrade the platform on GKE or EKS.
 #
 #   scripts/deploy.sh --env prod \
 #     --domain airflow.example.com \
 #     --image europe-west1-docker.pkg.dev/proj/airflow/airflow-workspace@sha256:...
 #
+#   scripts/deploy.sh --cloud aws \
+#     --domain airflow.example.com \
+#     --certificate-arn arn:aws:acm:eu-west-1:111122223333:certificate/ID \
+#     --image 111122223333.dkr.ecr.eu-west-1.amazonaws.com/airflow-workspace:3.3.2-<sha>
+#
 # Options:
-#   --env <dev|prod>     which environments/<env>.values.yaml to layer on
+#   --cloud <gke|aws>    target cloud (default: gke)
+#   --env <dev|prod|aws-prod>
+#                        which environments/<env>.values.yaml to layer on
+#                        (default: dev for gke, aws-prod for aws)
+#   --certificate-arn <arn>
+#                        ACM certificate for the ALB (required with --cloud aws)
 #   --domain <host>      public hostname; sets platform.domain, the ingress
 #                        host and the OAuth callback in one place
 #   --image <ref>        workspace image, ideally name@sha256:... A tag is
@@ -28,7 +38,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 source VERSIONS.env
 
-ENVIRONMENT="dev"
+CLOUD="gke"
+ENVIRONMENT=""
+CERT_ARN=""
 DOMAIN=""
 IMAGE=""
 NAMESPACE=""
@@ -40,7 +52,9 @@ DIFF=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --cloud)     CLOUD="$2"; shift 2 ;;
         --env)       ENVIRONMENT="$2"; shift 2 ;;
+        --certificate-arn) CERT_ARN="$2"; shift 2 ;;
         --domain)    DOMAIN="$2"; shift 2 ;;
         --image)     IMAGE="$2"; shift 2 ;;
         -n|--namespace) NAMESPACE="$2"; shift 2 ;;
@@ -49,14 +63,30 @@ while [[ $# -gt 0 ]]; do
         --memory)    MEMORY="$2"; shift 2 ;;
         --dry-run)   DRY_RUN=true; shift ;;
         --diff)      DIFF=true; shift ;;
-        -h|--help)   sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)   sed -n '2,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
 
+case "$CLOUD" in
+    gke) ENVIRONMENT="${ENVIRONMENT:-dev}" ;;
+    aws) ENVIRONMENT="${ENVIRONMENT:-aws-prod}" ;;
+    *) echo "--cloud must be gke or aws, got: $CLOUD" >&2; exit 1 ;;
+esac
+if [[ "$CLOUD" == "aws" && "$ENVIRONMENT" != aws-* ]]; then
+    echo "--cloud aws needs an aws-* environment (e.g. aws-prod), got: $ENVIRONMENT" >&2; exit 1
+fi
+if [[ "$CLOUD" == "gke" && "$ENVIRONMENT" == aws-* ]]; then
+    echo "environment $ENVIRONMENT is for AWS; pass --cloud aws" >&2; exit 1
+fi
+if [[ "$CLOUD" == "gke" && -n "$CERT_ARN" ]]; then
+    echo "--certificate-arn only applies to --cloud aws; GKE uses a Google-managed certificate" >&2; exit 1
+fi
+
 VALUES_FILE="environments/${ENVIRONMENT}.values.yaml"
 [[ -f "$VALUES_FILE" ]] || { echo "no such environment file: $VALUES_FILE" >&2; exit 1; }
-NAMESPACE="${NAMESPACE:-airflow-${ENVIRONMENT}}"
+# aws-prod -> airflow-prod, matching the GKE naming.
+NAMESPACE="${NAMESPACE:-airflow-${ENVIRONMENT#aws-}}"
 
 for tool in helm kubectl; do
     command -v "$tool" >/dev/null || { echo "$tool is required but not installed" >&2; exit 1; }
@@ -76,6 +106,18 @@ if [[ -z "$DOMAIN" ]]; then
     fail=1
 else
     note "✓" "domain ${DOMAIN}"
+fi
+
+if [[ "$CLOUD" == "aws" ]]; then
+    if [[ -z "$CERT_ARN" ]]; then
+        note "✗" "--certificate-arn is required with --cloud aws: the ALB terminates TLS with an ACM certificate (docs/aws-setup.md, step 5)"
+        fail=1
+    elif [[ "$CERT_ARN" != arn:aws*:acm:*:*:certificate/* ]]; then
+        note "✗" "--certificate-arn does not look like an ACM certificate ARN: ${CERT_ARN}"
+        fail=1
+    else
+        note "✓" "ACM certificate ${CERT_ARN##*/}"
+    fi
 fi
 
 if [[ -z "$IMAGE" ]]; then
@@ -103,9 +145,31 @@ else
     fail=1
 fi
 
+if [[ "$CLOUD" == "aws" ]]; then
+    # No ALB controller means the Ingress is created and never gets an address;
+    # no EBS CSI driver means every workspace volume stays Pending.
+    if kubectl get ingressclass alb >/dev/null 2>&1; then
+        note "✓" "AWS Load Balancer Controller installed (ingressclass alb)"
+    else
+        note "✗" "no 'alb' IngressClass; install the AWS Load Balancer Controller (docs/aws-setup.md, step 2)"
+        fail=1
+    fi
+    if kubectl get csidriver ebs.csi.aws.com >/dev/null 2>&1; then
+        note "✓" "EBS CSI driver installed"
+    else
+        note "✗" "EBS CSI driver missing; workspace volumes cannot be provisioned (add the aws-ebs-csi-driver EKS add-on)"
+        fail=1
+    fi
+    # NetworkPolicy is what keeps workspaces off IMDS and away from each other.
+    # The VPC CNI only enforces it when the network policy agent is enabled.
+    if kubectl -n kube-system get daemonset aws-node -o jsonpath='{.spec.template.spec.containers[*].name}' 2>/dev/null | grep -q "aws-eks-nodeagent"; then
+        note "✓" "VPC CNI network policy agent present"
+    else
+        note "!" "could not confirm NetworkPolicy enforcement. Workspace isolation depends on the VPC CNI with enableNetworkPolicy=true (or Calico) -- see docs/aws-setup.md."
+    fi
 # NetworkPolicy is what keeps workspaces off the metadata server and away from
 # each other. Without an enforcing CNI those policies are silently inert.
-if kubectl get crd >/dev/null 2>&1 && \
+elif kubectl get crd >/dev/null 2>&1 && \
    ! kubectl get nodes -o jsonpath='{.items[*].metadata.labels}' 2>/dev/null | grep -q "cloud.google.com/gke-netd\|projectcalico.org\|dataplane"; then
     note "!" "could not confirm NetworkPolicy enforcement on this cluster. Workspace isolation depends on it (GKE Dataplane V2 or Calico) -- see docs/gcp-setup.md."
 fi
@@ -158,6 +222,11 @@ else
     ARGS+=(--set "jupyterhub.singleuser.image.tag=${IMAGE##*:}")
 fi
 
+if [[ "$CLOUD" == "aws" ]]; then
+    # Dots in an annotation key must be escaped for --set.
+    ARGS+=(--set "jupyterhub.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/certificate-arn=${CERT_ARN}")
+fi
+
 if [[ -n "$CPU" ]]; then
     ARGS+=(--set "jupyterhub.singleuser.cpu.limit=${CPU}")
     ARGS+=(--set "jupyterhub.singleuser.cpu.guarantee=${CPU}")
@@ -186,6 +255,31 @@ fi
 
 echo "==> helm upgrade --install ${RELEASE} -> ${NAMESPACE}"
 helm "${ARGS[@]}" --timeout 15m --wait
+
+if [[ "$CLOUD" == "aws" ]]; then
+    cat <<EOF
+
+==============================================================
+  ✓ deployed
+
+  URL        https://${DOMAIN}
+  namespace  ${NAMESPACE}
+  release    ${RELEASE}
+
+  The ALB takes a few minutes to provision. Once the Ingress has an
+  ADDRESS, point ${DOMAIN} at it with a Route 53 alias (or CNAME):
+
+    kubectl -n ${NAMESPACE} get ingress
+    # ADDRESS is the ALB hostname, e.g. k8s-...elb.amazonaws.com
+
+  Watch a login and a spawn:
+
+    kubectl -n ${NAMESPACE} logs -f deploy/hub
+    kubectl -n ${NAMESPACE} get pods -l component=singleuser-server -w
+==============================================================
+EOF
+    exit 0
+fi
 
 cat <<EOF
 

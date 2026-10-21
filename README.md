@@ -1,6 +1,6 @@
 # Airflow 3 Developer Platform
 
-Multi-user Apache Airflow **3.3.2** development workspaces on GKE. Each
+Multi-user Apache Airflow **3.3.2** development workspaces on GKE or EKS. Each
 authorised user signs in with enterprise SSO and gets their own pod running
 JupyterLab, VS Code and a full Airflow 3 stack, with their own persistent
 volume.
@@ -31,6 +31,8 @@ See [docs/architecture.md](docs/architecture.md) for diagrams and
 
 ## Quick start
 
+Google Cloud (GKE) first; the AWS (EKS) equivalent follows.
+
 ```bash
 # 1. Cluster, registry, static IP, DNS — docs/gcp-setup.md
 #    then point kubectl at it:
@@ -53,6 +55,29 @@ scripts/deploy.sh --env prod \
 `deploy.sh` runs a preflight first: cluster reachable, OIDC Secret present,
 domain and image supplied, NetworkPolicy enforcement plausible. It refuses to
 deploy a configuration that would come up unprotected or unreachable.
+
+### On AWS (EKS)
+
+The same chart and image, with an ALB and an ACM certificate instead of the
+Google load balancer. Full walkthrough: [docs/aws-setup.md](docs/aws-setup.md).
+
+```bash
+# 1. Cluster, load balancer controller, autoscaler, ECR, ACM certificate — docs/aws-setup.md
+#    then point kubectl at it:
+aws eks update-kubeconfig --name CLUSTER --region REGION
+# 2. Build and push the workspace image
+scripts/build-image.sh --registry ACCOUNT.dkr.ecr.REGION.amazonaws.com --push
+
+# 3. Store the OIDC client credentials — docs/oidc-setup.md
+scripts/create-oidc-secret.sh --namespace airflow-prod \
+  --issuer https://login.example.com/oauth2/default --client-id <client-id>
+
+# 4. Deploy
+scripts/deploy.sh --cloud aws \
+  --domain airflow.example.com \
+  --certificate-arn arn:aws:acm:REGION:ACCOUNT:certificate/ID \
+  --image ACCOUNT.dkr.ecr.REGION.amazonaws.com/airflow-workspace:3.3.2-<sha>
+```
 
 ## Workspace size
 
@@ -108,11 +133,12 @@ images/workspace/                 the workspace image
   jupyter_server_config.py          jupyter-server-proxy registrations
 charts/airflow-dev-platform/      Helm chart wrapping Zero to JupyterHub 4.4.2
   values.yaml                       OIDC, sizing, isolation, culling
-  templates/                        GKE BackendConfig/FrontendConfig/cert, quota
-environments/{dev,prod}.values.yaml
+  templates/                        GKE BackendConfig/FrontendConfig/cert, AWS gp3 StorageClass, quota
+environments/{dev,prod,aws-prod}.values.yaml
+infra/aws/eksctl-cluster.yaml     EKS cluster, node groups and add-ons
 scripts/{build-image,create-oidc-secret,deploy}.sh
 tests/test_hub_config.py
-docs/{gcp-setup,oidc-setup,operations,security}.md
+docs/{gcp-setup,aws-setup,oidc-setup,operations,security}.md
 ```
 
 ## Inside a workspace
@@ -166,6 +192,7 @@ docker run --rm -p 8888:8888 -v "$PWD/dags:/opt/airflow/dags" airflow-workspace:
 ## Documentation
 
 - [docs/gcp-setup.md](docs/gcp-setup.md) — cluster, node pools, registry, DNS, Cloud SQL, backups
+- [docs/aws-setup.md](docs/aws-setup.md) — EKS, ALB, autoscaler, ECR, ACM, DNS, RDS, backups
 - [docs/oidc-setup.md](docs/oidc-setup.md) — Okta / Entra / Keycloak registration, claims, offboarding
 - [docs/operations.md](docs/operations.md) — sizing, upgrades, runbook, cost
 - [docs/security.md](docs/security.md) — posture, known gaps, pre-launch checklist

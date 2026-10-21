@@ -26,9 +26,6 @@ platform:
 
   gke:
     enabled: true
-    # Reserve first:
-    #   gcloud compute addresses create airflow-platform-ip --global
-    staticIpName: airflow-platform-ip
     managedCertificate:
       enabled: true
     backendTimeoutSeconds: 3600
@@ -64,12 +61,20 @@ jupyterhub:
         memory: 2Gi
 
   ingress:
+    ingressClassName: gce
     annotations:
-      # platform.gke.staticIpName is not read by any template; this annotation
-      # is what binds the Ingress to the reserved address (docs/gcp-setup.md, step 4).
+      kubernetes.io/ingress.allow-http: "true"
+      networking.gke.io/managed-certificates: airflow-dev-platform-cert
+      networking.gke.io/v1beta1.FrontendConfig: airflow-dev-platform-frontend
+      # Binds the Ingress to the reserved global static IP
+      # (docs/gcp-setup.md, step 4). Optional: without it GKE allocates an
+      # ephemeral address that changes whenever the Ingress is recreated.
       kubernetes.io/ingress.global-static-ip-name: airflow-platform-ip
 
   proxy:
+    service:
+      annotations:
+        cloud.google.com/backend-config: '{"default":"airflow-dev-platform-hub"}'
     chp:
       pdb:
         enabled: true

@@ -1,0 +1,30 @@
+{{- include "airflow-dev-platform.validate" . }}
+{{- if and .Values.platform.aws.enabled .Values.platform.aws.storageClass.create }}
+---
+# ---------------------------------------------------------------------------
+# StorageClass — gp3 volumes from the EBS CSI driver for the Hub database and
+# every workspace's home volume.
+#
+# WaitForFirstConsumer matters: an EBS volume lives in one availability zone, so
+# it must be created in the zone the pod is scheduled to rather than before
+# scheduling, which would strand the pod in a zone with no capacity for it.
+# allowVolumeExpansion lets a full workspace be grown without a migration.
+#
+# Reclaim policy is Delete (the default). A deleted PVC deletes its volume, so
+# take EBS snapshots (docs/aws-setup.md, backups) before pruning workspaces.
+# ---------------------------------------------------------------------------
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.platform.aws.storageClass.name }}
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+  fsType: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+{{- end }}

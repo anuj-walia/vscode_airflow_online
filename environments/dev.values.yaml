@@ -22,7 +22,6 @@ platform:
       count/pods: "20"
   gke:
     enabled: true
-    staticIpName: ""
     managedCertificate:
       enabled: true
 
@@ -32,6 +31,7 @@ jupyterhub:
       type: sqlite-pvc
       pvc:
         storage: 2Gi
+        storageClassName: premium-rwo
     extraEnv:
       PLATFORM_DOMAIN: ""
       # Restrict even the dev environment to a real IdP group. An open dev
@@ -39,6 +39,18 @@ jupyterhub:
       OIDC_ALLOWED_GROUPS: "airflow-platform-users-dev"
       OIDC_OPERATOR_GROUPS: "airflow-platform-admins"
       OIDC_ALLOW_ALL_AUTHENTICATED: "false"
+
+  ingress:
+    ingressClassName: gce
+    annotations:
+      kubernetes.io/ingress.allow-http: "true"
+      networking.gke.io/managed-certificates: airflow-dev-platform-cert
+      networking.gke.io/v1beta1.FrontendConfig: airflow-dev-platform-frontend
+
+  proxy:
+    service:
+      annotations:
+        cloud.google.com/backend-config: '{"default":"airflow-dev-platform-hub"}'
 
   singleuser:
     image:
@@ -56,6 +68,8 @@ jupyterhub:
 
     storage:
       capacity: 10Gi
+      dynamic:
+        storageClass: premium-rwo
 
   cull:
     timeout: 1800     # 30 minutes idle

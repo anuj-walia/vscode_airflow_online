@@ -1,0 +1,99 @@
+# ---------------------------------------------------------------------------
+# eksctl-cluster.yaml — EKS cluster for the Airflow 3 developer platform.
+#
+#   sed -e 's/CLUSTER_NAME/airflow-platform/' -e 's/AWS_REGION/eu-west-1/' \
+#     infra/aws/eksctl-cluster.yaml | eksctl create cluster -f -
+#
+# (or edit the placeholders in place). Setup order is in docs/aws-setup.md.
+#
+# What is load-bearing here, rather than preference:
+#
+#   * vpc-cni with enableNetworkPolicy. The chart isolates workspaces from each
+#     other and from the metadata service with NetworkPolicy. Without this the
+#     policies are accepted by the API server and silently not enforced.
+#   * Node labels/taint on both groups. The chart sets
+#     matchNodePurpose: require, so pods stay Pending until nodes carry
+#     hub.jupyter.org/node-purpose. The taint keeps everything else off the
+#     workspace nodes.
+#   * disableIMDSv1 + disablePodIMDS on every group, so a workspace cannot reach
+#     the instance's credentials even if the NetworkPolicy were bypassed.
+#   * EBS CSI driver, because every workspace home volume is an EBS volume.
+#
+# The kubernetes version is pinned in VERSIONS.env (EKS_KUBERNETES_VERSION);
+# keep the two in step.
+# ---------------------------------------------------------------------------
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: CLUSTER_NAME
+  region: AWS_REGION
+  version: "1.35"
+
+addons:
+  # Pod Identity replaces IRSA: no OIDC provider and no role trust-policy
+  # editing. Only controllers get AWS permissions; workspace pods get none.
+  - name: eks-pod-identity-agent
+  - name: vpc-cni
+    configurationValues: '{"enableNetworkPolicy": "true"}'
+  - name: aws-ebs-csi-driver
+    useDefaultPodIdentityAssociations: true
+  - name: coredns
+  - name: kube-proxy
+
+iam:
+  podIdentityAssociations:
+    # The AWS Load Balancer Controller (installed in docs/aws-setup.md) turns
+    # the Ingress into an ALB.
+    - namespace: kube-system
+      serviceAccountName: aws-load-balancer-controller
+      createServiceAccount: true
+      wellKnownPolicies:
+        awsLoadBalancerController: true
+    # The Cluster Autoscaler grows and shrinks the workspaces node group.
+    # EKS node groups do not autoscale on their own.
+    - namespace: kube-system
+      serviceAccountName: cluster-autoscaler
+      createServiceAccount: true
+      wellKnownPolicies:
+        autoScaler: true
+
+managedNodeGroups:
+  # Hub, proxy, user-scheduler and the controllers. Small and steady.
+  - name: core
+    instanceType: m6i.xlarge
+    minSize: 2
+    desiredCapacity: 2
+    maxSize: 3
+    volumeType: gp3
+    volumeSize: 50
+    privateNetworking: true
+    disableIMDSv1: true
+    disablePodIMDS: true
+    labels:
+      hub.jupyter.org/node-purpose: core
+
+  # One workspace is 1 CPU / 16 GB. r6i.xlarge (4 vCPU / 32 GB) fits one with
+  # room for system daemons; r6i.2xlarge (8 / 64) fits three. Scales to zero.
+  - name: workspaces
+    instanceType: r6i.xlarge
+    minSize: 0
+    desiredCapacity: 0
+    maxSize: 10
+    volumeType: gp3
+    volumeSize: 100
+    privateNetworking: true
+    disableIMDSv1: true
+    disablePodIMDS: true
+    labels:
+      hub.jupyter.org/node-purpose: user
+    taints:
+      - key: hub.jupyter.org_dedicated
+        value: user
+        effect: NoSchedule
+    # Lets the Cluster Autoscaler discover the group, and scale it up from zero
+    # by reading the label and taint from the ASG tags.
+    propagateASGTags: true
+    tags:
+      k8s.io/cluster-autoscaler/enabled: "true"
+      k8s.io/cluster-autoscaler/CLUSTER_NAME: owned

@@ -8,6 +8,7 @@
 #
 #   scripts/build-image.sh \
 #     --registry europe-west1-docker.pkg.dev/my-project/airflow \
+#     (for ECR: --registry 111122223333.dkr.ecr.eu-west-1.amazonaws.com) \
 #     --push
 #
 # Prints the immutable digest reference on success. Deploy that, not the tag.
@@ -24,7 +25,7 @@ REGISTRY=""
 IMAGE_NAME="airflow-workspace"
 TAG=""
 PUSH=false
-PLATFORM="linux/amd64"   # GKE node architecture; use linux/arm64 for Arm pools
+PLATFORM="linux/amd64"   # GKE/EKS x86 nodes; use linux/arm64 for Arm (Tau T2A, Graviton) pools
 
 usage() {
     sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'

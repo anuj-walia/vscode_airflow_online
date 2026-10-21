@@ -44,6 +44,55 @@ JupyterLab listens off-loopback, so another user cannot reach your Airflow.
 Airflow 3 task execution: workers call the API server on `127.0.0.1:9091` and keep
 the `${JUPYTERHUB_SERVICE_PREFIX}airflow-api/execution/` path prefix.
 
+## Production topology (AWS / EKS)
+
+Same chart, same workspace image. Only the cloud edge changes; the Hub, the
+workspace pods and the isolation model are identical to GKE.
+
+```mermaid
+flowchart TB
+    user([Browser]) -->|HTTPS| alb[Application Load Balancer<br/>TLS with ACM certificate]
+    idp[(Enterprise OIDC IdP<br/>MFA + groups)]
+    r53[Route 53 alias] -.-> alb
+
+    subgraph eks[EKS cluster, VPC CNI with network policy]
+      alb -->|IP targets| proxy[configurable-http-proxy]
+      subgraph hubns[Namespace airflow-prod: control plane, core node group]
+        proxy --> hub[JupyterHub<br/>GenericOAuthenticator + KubeSpawner]
+        hubdb[(Hub SQLite on EBS gp3)]
+        hub --- hubdb
+        secret[[OIDC Secret]] -.-> hub
+      end
+      hub -->|spawns one pod per user| podA
+      subgraph podA[Workspace pod: workspaces node group, tainted]
+        lab[JupyterLab :8888<br/>only exposed port]
+        pvcA[(per-user EBS gp3 volume /opt/airflow)]
+        lab --- pvcA
+      end
+      lbc[AWS Load Balancer Controller] -.->|creates| alb
+      ca[Cluster Autoscaler] -.->|scales from zero| podA
+      np{{NetworkPolicy blocks IMDS and other workspaces}}
+    end
+
+    hub <-->|authorization code flow| idp
+    ecr[(ECR, immutable tags<br/>workspace image)] --> podA
+```
+
+GKE to EKS, piece by piece:
+
+| Concern | GKE | EKS |
+| :-- | :-- | :-- |
+| Edge | Google load balancer, `BackendConfig`, `FrontendConfig` | ALB from the AWS Load Balancer Controller, configured by Ingress annotations |
+| TLS | `ManagedCertificate` | ACM certificate ARN (`deploy.sh --certificate-arn`) |
+| Registry | Artifact Registry | ECR with immutable tags |
+| Volumes | `premium-rwo` (PD) | `gp3` (EBS CSI driver) |
+| Policy enforcement | Dataplane V2 | VPC CNI network policy |
+| Metadata service | GCE metadata server | IMDS (also hop limit 1) |
+| Node autoscaling | built in | Cluster Autoscaler |
+| Cloud permissions | Workload Identity | EKS Pod Identity |
+
+See [aws-setup.md](aws-setup.md) to build it.
+
 ## Local topologies
 
 ```mermaid
@@ -76,7 +125,8 @@ parsed the new folder.
 | :-- | :-- |
 | Workspace image | `images/workspace/` (`Dockerfile`, `bin/start.sh`, `bin/workspace_services.py`, `bin/workspace-dags`, `vscode/launch.json`) |
 | Hub chart | `charts/airflow-dev-platform/` (z2jh 4.4.2 subchart) |
-| Per-environment values | `environments/{dev,prod}.values.yaml` |
+| Per-environment values | `environments/{dev,prod,aws-prod}.values.yaml` |
+| EKS cluster definition | `infra/aws/eksctl-cluster.yaml` |
 | Pinned versions | `VERSIONS.env` |
 | Build / deploy | `scripts/build-image.sh`, `scripts/deploy.sh` |
 
