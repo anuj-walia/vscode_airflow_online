@@ -18,7 +18,10 @@ platform:
     hard:
       requests.cpu: "8"
       requests.memory: 120Gi
-      limits.cpu: "8"
+      # The LimitRange gives containers without limits a 2 CPU / 16Gi default
+      # limit; the image puller and two schedulers inherit it, so the platform
+      # alone counts as 8 CPU / ~49.5Gi. 16 leaves room for 4 workspaces.
+      limits.cpu: "16"
       limits.memory: 120Gi
       persistentvolumeclaims: "20"
       count/pods: "20"
@@ -46,10 +49,17 @@ jupyterhub:
           - profile
           - email
         manage_groups: false
+        # Base values set this and it requires manage_groups. "" is the
+        # authenticator's own default (disabled); null would reach it as None.
+        auth_state_groups_key: ""
 
   ingress:
-    ingressClassName: gce
+    # No IngressClass object exists on this cluster, and the GKE controller
+    # ignored an ingress selected with spec.ingressClassName (no load balancer
+    # after 18 minutes). Select it with the annotation instead.
+    ingressClassName: ""
     annotations:
+      kubernetes.io/ingress.class: gce
       kubernetes.io/ingress.allow-http: "true"
       # Binds the load balancer to the reserved global address `waas-ip`
       # (gcloud compute addresses create waas-ip --global). Without this the
