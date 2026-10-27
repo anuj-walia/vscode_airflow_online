@@ -28,3 +28,9 @@ simple_auth_passwords.json
 simple_auth_manager_passwords.json*
 .env
 *.tfvars
+.kube/configs
+.kube/gcp-learning
+.kube/.kube
+*.log
+.kube/script
+

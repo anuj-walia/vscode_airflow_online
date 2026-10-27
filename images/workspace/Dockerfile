@@ -80,12 +80,18 @@ COPY requirements.txt /tmp/requirements.txt
 #
 # If the constrained install cannot satisfy a Jupyter pin it fails here, loudly,
 # which is the correct place to find out.
+#
+# The constraints file name needs the interpreter's major.minor (3.12). Do not use
+# ${PYTHON_VERSION} here: the official python base image sets its own ENV
+# PYTHON_VERSION (for example 3.12.15), and an ENV beats a build ARG of the same
+# name, which turned the URL into constraints-3.12.15.txt (404). Ask the interpreter.
 RUN set -eux; \
+    py_mm="$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')"; \
     pip install --upgrade pip setuptools wheel; \
     pip install -r /tmp/requirements.txt; \
     pip install \
         "apache-airflow[postgres]==${AIRFLOW_VERSION}" \
-        --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"; \
+        --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${py_mm}.txt"; \
     rm /tmp/requirements.txt; \
     pip check
 
