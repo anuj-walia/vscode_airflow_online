@@ -145,6 +145,22 @@ else
     fail=1
 fi
 
+# A Hub pointed at Cloud SQL needs its database password and a real address.
+# Only checked when this environment opts in with `type: postgres` (a commented
+# example in the file does not count).
+if grep -Eq '^[[:space:]]*type:[[:space:]]*postgres[[:space:]]*$' "$VALUES_FILE"; then
+    if grep -q 'HUB_DB_PRIVATE_IP' "$VALUES_FILE"; then
+        note "✗" "${VALUES_FILE} still has the HUB_DB_PRIVATE_IP placeholder; run scripts/create-hub-db-secret.sh and paste the URL it prints"
+        fail=1
+    fi
+    if kubectl -n "$NAMESPACE" get secret airflow-platform-hub-db >/dev/null 2>&1; then
+        note "✓" "Hub database secret present in ${NAMESPACE}"
+    else
+        note "✗" "secret airflow-platform-hub-db missing in ${NAMESPACE}; run scripts/create-hub-db-secret.sh first"
+        fail=1
+    fi
+fi
+
 if [[ "$CLOUD" == "aws" ]]; then
     # No ALB controller means the Ingress is created and never gets an address;
     # no EBS CSI driver means every workspace volume stays Pending.

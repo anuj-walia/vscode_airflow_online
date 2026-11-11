@@ -33,11 +33,18 @@ platform:
 jupyterhub:
   hub:
     db:
-      type: sqlite-pvc
-      pvc:
-        storage: 2Gi
-        storageClassName: premium-rwo
+      # Hub state lives in Cloud SQL (instance waas-hub-db, private IP only).
+      # 10.40.0.3 is the private address scripts/create-hub-db-secret.sh printed
+      # (from the reserved range waas-sql-range).
+      type: postgres
+      url: postgresql+psycopg2://hub@10.40.0.3:5432/jupyterhub?sslmode=require
     extraEnv:
+      # The password comes from the Secret made by scripts/create-hub-db-secret.sh.
+      PGPASSWORD:
+        valueFrom:
+          secretKeyRef:
+            name: airflow-platform-hub-db
+            key: password
       OIDC_ALLOWED_GROUPS: ""
       OIDC_OPERATOR_GROUPS: ""
       OIDC_ALLOW_ALL_AUTHENTICATED: "true"
@@ -49,6 +56,11 @@ jupyterhub:
           - profile
           - email
         manage_groups: false
+        # Readable usernames in the Hub admin page. Safe here only because the
+        # project's OAuth Audience is Internal (company accounts), so an address
+        # is not handed to a stranger. Not for a multi-tenant environment:
+        # see docs/oidc-setup.md "Which claim becomes the username".
+        username_claim: email
         # Base values set this and it requires manage_groups. "" is the
         # authenticator's own default (disabled); null would reach it as None.
         auth_state_groups_key: ""

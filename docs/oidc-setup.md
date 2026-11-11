@@ -77,6 +77,29 @@ Clients → Create → OpenID Connect, access type confidential.
   off (otherwise your group names arrive as `/airflow-platform-users`) and
   *Add to ID token* on.
 
+## Full Hub admins (people, not groups)
+
+`airflow-platform-admins` gives the operator role only. To make particular
+people **full JupyterHub admins** (the whole admin page: add and delete users,
+manage any workspace), list their emails:
+
+```bash
+scripts/set-hub-admins.sh --namespace airflow-prod \
+  --emails first.person@example.com,second.person@example.com
+```
+
+The script stores the list in Secret `airflow-platform-admins` (so no
+personal addresses live in git) and restarts the Hub. At each sign-in the Hub
+compares the verified `email` claim with that list
+(`hub.extraConfig.05-admins`); a match grants admin. It matches the email, not
+the username, because usernames are the opaque `sub` claim.
+
+- It only grants. Removing an email from the list does not demote anyone: use
+  the admin page (`/hub/admin`) to demote, or delete the user.
+- Admins can also promote others on the admin page. That choice is kept in the
+  Hub database, so with Cloud SQL it survives a Hub restart.
+- With no Secret the list is empty and nobody is promoted automatically.
+
 ## Which claim becomes the username
 
 `username_claim` defaults to `sub`, and `sub` is the right default: it is the

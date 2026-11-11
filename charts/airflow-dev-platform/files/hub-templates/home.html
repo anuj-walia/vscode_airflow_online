@@ -1,0 +1,59 @@
+{#
+  Home page after sign-in. Replaces the stock "main" block but keeps the
+  element ids the stock home.js binds to (#stop, #start), so starting and
+  stopping behave exactly as in stock JupyterHub. Named servers are not used on
+  this platform, so their table is not reproduced.
+#}
+{% extends "templates/home.html" %}
+{% block main %}
+  <div class="container">
+    <section class="ws-hero">
+      <h1>{{ product_name }}</h1>
+      <p class="lead">
+        Your private Airflow 3 workspace.
+        {% if default_server.active %}It is running now.{% else %}It is stopped; start it when you are ready.{% endif %}
+      </p>
+      <div class="d-flex justify-content-center gap-2 flex-wrap">
+        {% if default_server.active %}<a id="stop" role="button" class="btn btn-lg btn-outline-danger">Stop My Server</a>{% endif %}
+        <a id="start" role="button" class="btn btn-lg btn-primary" href="{{ url }}">
+          {% if not default_server.active %}Start{% endif %}
+          My Server
+        </a>
+      </div>
+      <p class="text-body-secondary small mt-3 mb-0">
+        {% if default_server.active %}
+          Open Airflow, JupyterLab or VS Code from the launcher once it loads.
+        {% else %}
+          The first start can take a few minutes while a machine is prepared.
+        {% endif %}
+      </p>
+    </section>
+
+    <section class="ws-cards row g-3 mb-4" aria-label="What is in your workspace">
+      <div class="col-md-4">
+        <div class="card"><div class="card-body">
+          <h2 class="card-title">Airflow 3</h2>
+          <p class="card-text mb-0">Scheduler, DAG processor and triggerer run inside your workspace. Put DAG files in the <code>dags</code> folder and they appear in the Airflow UI.</p>
+        </div></div>
+      </div>
+      <div class="col-md-4">
+        <div class="card"><div class="card-body">
+          <h2 class="card-title">JupyterLab and VS Code</h2>
+          <p class="card-text mb-0">Pick either editor from the launcher. Both see the same files.</p>
+        </div></div>
+      </div>
+      <div class="col-md-4">
+        <div class="card"><div class="card-body">
+          <h2 class="card-title">Saved for you</h2>
+          <p class="card-text mb-0">Idle workspaces stop on their own. Your files and Airflow history stay on your disk.</p>
+        </div></div>
+      </div>
+    </section>
+
+    {% if user.admin %}
+      <p class="text-center">
+        <a class="btn btn-outline-secondary btn-sm" href="{{ base_url }}admin">Administer users and workspaces</a>
+      </p>
+    {% endif %}
+  </div>
+{% endblock main %}

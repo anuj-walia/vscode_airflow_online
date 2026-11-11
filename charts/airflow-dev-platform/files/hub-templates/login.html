@@ -1,0 +1,78 @@
+{#
+  Sign-in page. Extends the stock login.html and replaces only the container,
+  so the stock script that unhides the "not served over HTTPS" warning keeps
+  working (it looks up #insecure-login-warning). With a password-style
+  authenticator (no login_service) the stock form is shown unchanged.
+#}
+{% extends "templates/login.html" %}
+{% block login_container %}
+  {% if login_service %}
+    <section class="ws-hero">
+      <h1>{{ product_name }}</h1>
+      <p class="lead">
+        {{ product_tagline }}. Sign in to get your own private Apache Airflow 3
+        environment in the browser: write DAGs, run them on a real scheduler,
+        and watch them in the Airflow UI. Nothing to install.
+      </p>
+      <p id="insecure-login-warning" class="hidden alert alert-warning">
+        Warning: this page seems to be served over an unsecured HTTP connection.
+        Do not sign in until it is served over HTTPS.
+      </p>
+      <a role="button" class="btn btn-primary btn-lg" href="{{ authenticator_login_url }}">
+        Sign in with {{ login_service }}
+      </a>
+    </section>
+
+    <section class="ws-cards row g-3 mb-4" aria-label="What is in a workspace">
+      <div class="col-md-6 col-lg-3">
+        <div class="card"><div class="card-body">
+          <h2 class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/></svg>
+            Airflow 3, built in
+          </h2>
+          <p class="card-text mb-0">API server and UI, scheduler, DAG processor and triggerer, already running and wired together.</p>
+        </div></div>
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <div class="card"><div class="card-body">
+          <h2 class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 13h6M9 17h6"/></svg>
+            JupyterLab
+          </h2>
+          <p class="card-text mb-0">Notebooks, a terminal and a file browser for exploring data and trying code.</p>
+        </div></div>
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <div class="card"><div class="card-body">
+          <h2 class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg>
+            VS Code
+          </h2>
+          <p class="card-text mb-0">A full editor in the browser, with Python tooling set up for your DAGs.</p>
+        </div></div>
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <div class="card"><div class="card-body">
+          <h2 class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+            Yours alone
+          </h2>
+          <p class="card-text mb-0">Your own pod and your own disk. Files and DAGs are kept when the workspace stops.</p>
+        </div></div>
+      </div>
+    </section>
+
+    <section class="row justify-content-center">
+      <div class="col-lg-8">
+        <h2 class="h5 mb-3">How it works</h2>
+        <ol class="ws-steps">
+          <li><span>Sign in with {{ login_service }}. Access is limited to people your organisation has allowed.</span></li>
+          <li><span>Start your workspace. The first start can take a few minutes while a machine is prepared.</span></li>
+          <li><span>Open Airflow, JupyterLab or VS Code from the launcher. Idle workspaces stop on their own and start again with your files intact.</span></li>
+        </ol>
+      </div>
+    </section>
+  {% else %}
+    {{ super() }}
+  {% endif %}
+{% endblock login_container %}

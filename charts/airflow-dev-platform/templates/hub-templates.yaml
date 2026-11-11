@@ -1,0 +1,17 @@
+# ---------------------------------------------------------------------------
+# Hub page templates — the branded login, home and "starting" pages, plus the
+# page.html that gives every Hub page the same brand bar.
+#
+# The files are Jinja, not Helm, so they are copied verbatim with AsConfig and
+# never rendered here. The Hub mounts this ConfigMap at
+# jupyterhub.hub.templatePaths (values.yaml). The name is static because the
+# volume in values.yaml refers to it by string.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: airflow-dev-platform-hub-templates
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+data:
+  {{- (.Files.Glob "files/hub-templates/*.html").AsConfig | nindent 2 }}

@@ -1,0 +1,14 @@
+{#
+  "Starting your workspace" page. Only the message block is replaced; the
+  progress bar and event-stream script come from the stock template, so the
+  redirect when the server is ready still works.
+#}
+{% extends "templates/spawn_pending.html" %}
+{% block message %}
+  <h1 class="h3 mb-3">Starting your workspace</h1>
+  <p>We are preparing your own Airflow environment: a private pod, your saved files, and the Airflow services.</p>
+  <p class="text-body-secondary">
+    This usually takes under a minute. If a new machine has to be added it can take
+    a few minutes. This page opens your workspace automatically when it is ready.
+  </p>
+{% endblock message %}

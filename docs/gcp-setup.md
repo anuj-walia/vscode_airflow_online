@@ -277,6 +277,48 @@ The database password goes in `hub.db.password`, sourced from a Secret — or
 skip it entirely by granting the Hub's Google service account
 `roles/cloudsql.client` and using IAM database authentication.
 
+### Variant: private IP and a password (no Auth Proxy)
+
+This is what `environments/waas.values.yaml` uses. It needs no IAM grants, so
+it works for someone with only the Editor role, at the cost of a long-lived
+password in a Secret instead of short-lived credentials. The Hub reaches the
+instance's private address directly over the VPC.
+
+```bash
+# 1. A reserved range and a peering to Google's service network (once per VPC).
+gcloud compute addresses create waas-sql-range --global \
+  --purpose=VPC_PEERING --addresses=10.40.0.0 --prefix-length=20 \
+  --network=waas-vpc --description="gcp-pca lab"
+gcloud services vpc-peerings connect \
+  --service=servicenetworking.googleapis.com \
+  --ranges=waas-sql-range --network=waas-vpc
+
+# 2. The instance: private IP only, encrypted connections only.
+gcloud sql instances create waas-hub-db \
+  --database-version=POSTGRES_16 --edition=ENTERPRISE --tier=db-g1-small \
+  --zone="$REGION-a" --network=waas-vpc --no-assign-ip \
+  --ssl-mode=ENCRYPTED_ONLY --storage-size=10 --backup-start-time=07:00 \
+  --labels=lab=gcp-pca,owner=anuj_walia
+gcloud sql databases create jupyterhub --instance=waas-hub-db
+
+# 3. Generate the password, store it as a Secret, and print the URL to use.
+scripts/create-hub-db-secret.sh --namespace airflow-waas --instance waas-hub-db
+```
+
+Put the printed address in the environment file in place of
+`HUB_DB_PRIVATE_IP`; `scripts/deploy.sh` refuses to run while the placeholder
+remains or the Secret is missing. The range must not overlap the node, pod or
+Service ranges of the cluster.
+
+Switching an existing Hub from `sqlite-pvc` to Cloud SQL starts with an empty
+database: Helm deletes the old `hub-db-dir` disk, because the chart stops
+rendering it. Stop running workspaces first. People are recreated at their
+next sign-in under the same username, so their workspace volumes reattach.
+
+To stop paying while idle, `gcloud sql instances patch waas-hub-db
+--activation-policy=NEVER` stops the instance (storage is still billed); the
+Hub cannot start until it is set back to `ALWAYS`.
+
 ## 9. Backups
 
 | State | Where it lives | How to protect it |

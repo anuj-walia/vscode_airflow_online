@@ -180,6 +180,35 @@ jupyterhub:
       # Escape hatch: "true" admits every account the IdP will authenticate.
       # Only appropriate for a single-purpose tenant.
       OIDC_ALLOW_ALL_AUTHENTICATED: "false"
+      # Comma-separated emails that become full JupyterHub admins at sign-in.
+      # Kept in a Secret (scripts/set-hub-admins.sh), not in git. Optional: with
+      # no Secret there are no bootstrap admins. See docs/oidc-setup.md.
+      OIDC_ADMIN_EMAILS:
+        valueFrom:
+          secretKeyRef:
+            name: airflow-platform-admins
+            key: emails
+            optional: true
+
+    # Pages that replace the stock JupyterHub look. page.html carries the
+    # brand bar for every page; login, home and spawn_pending extend the stock
+    # templates so the working parts (sign-in link, start/stop, progress
+    # stream) stay JupyterHub's own. Files live in files/hub-templates/ and are
+    # mounted from a ConfigMap. Changing them needs `kubectl rollout restart
+    # deploy/hub`: the Hub reads templates once at start.
+    templatePaths:
+      - /usr/local/share/airflow-platform/templates
+    templateVars:
+      product_name: "Airflow Workspaces"
+      product_tagline: "Workspace as a Service, with Airflow built in"
+    extraVolumes:
+      - name: platform-templates
+        configMap:
+          name: airflow-dev-platform-hub-templates
+    extraVolumeMounts:
+      - name: platform-templates
+        mountPath: /usr/local/share/airflow-platform/templates
+        readOnly: true
 
     extraConfig:
       # Keys execute in sorted order, after all values-derived config.
@@ -330,6 +359,34 @@ jupyterhub:
             spawner.environment["WORKSPACE_AIRFLOW_USERNAME"] = display
 
         c.KubeSpawner.pre_spawn_hook = _workspace_environment
+
+      05-admins: |
+        # Make the people listed in OIDC_ADMIN_EMAILS full JupyterHub admins.
+        #
+        # Usernames are the opaque `sub` claim, so Authenticator.admin_users
+        # (which matches usernames) cannot be used; match the verified email
+        # from the ID token instead. This only ever *grants* admin. Someone
+        # promoted in the admin page keeps the role, and removing an email
+        # from the Secret does not demote anyone: demote in the admin page.
+        import os
+        import sys
+
+        _admin_emails = {
+            v.strip().lower()
+            for v in os.environ.get("OIDC_ADMIN_EMAILS", "").split(",")
+            if v.strip()
+        }
+
+        async def _grant_admin(authenticator, handler, authentication):
+            claims = (authentication.get("auth_state") or {}).get("oauth_user") or {}
+            email = (claims.get("email") or "").strip().lower()
+            if email and email in _admin_emails and claims.get("email_verified") is not False:
+                authentication["admin"] = True
+            return authentication
+
+        if _admin_emails:
+            c.Authenticator.post_auth_hook = _grant_admin
+            print(f"{len(_admin_emails)} bootstrap admin email(s) configured", file=sys.stderr)
 
     # A single Hub is the supported topology; make voluntary disruptions wait.
     pdb:
