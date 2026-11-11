@@ -61,3 +61,9 @@ The supported default topology is JupyterHub:
 - Kubernetes: build, deploy, spawn the intended profile at `http://localhost:30080`, and inspect Hub/user-pod logs.
 - Airflow 3 on `k8s`: execute a task, not merely load the UI; this exercises the direct prefixed execution API route.
 - Unified: test first install, cached restart, and version-change reinstall with a supported Airflow/Python pair.
+
+## GIT RULES
+- No Co-Authored-By / Claude signature in commit messages.
+- 50/72 rule. Subject in plain English, no conventional-commit prefixes.
+- n worktrees, never checkout main directly; merge from the original repo path.
+- Commit after completing work unless told otherwise. Run /codex:review after each step and before committing non-trivial changes; resolve gaps first.
