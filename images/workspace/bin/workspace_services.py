@@ -460,14 +460,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # keep the pod log readable
         pass
 
-    # jupyter-server-proxy mounts this app under /user/<name>/airflow-scheduler/.
-    # Forms post to paths relative to that prefix, so build them from the
-    # request path rather than assuming a root mount.
+    # jupyter-server-proxy mounts this app under /user/<name>/airflow-scheduler/
+    # and strips that prefix (absolute_url False), so self.path is "/" here
+    # while the browser is at /user/<name>/airflow-scheduler/. Every URL this
+    # app sends to the browser must therefore be relative: an absolute "/start"
+    # would leave the workspace and hit the Hub, which rejects the POST with
+    # "403 '_xsrf' argument missing". The page is served at the app root, so
+    # "./" is the app root in the browser too.
     def _action_prefix(self) -> str:
-        path = urllib.parse.urlparse(self.path).path
-        if not path.endswith("/"):
-            path += "/"
-        return path
+        return "./"
 
     def _selected(self) -> str:
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -506,7 +507,9 @@ class Handler(BaseHTTPRequestHandler):
                 if error:
                     return self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
                 return self._send_json(HTTPStatus.OK, {"dags_folder": resolved})
-            target = self._action_prefix().rsplit("/", 2)[0] + "/"
+            # Relative to the POST URL .../airflow-scheduler/dags-folder,
+            # "./" is the page itself.
+            target = "./"
             if error:
                 target += "?" + urllib.parse.urlencode({"error": error})
             self.send_response(HTTPStatus.SEE_OTHER)
@@ -524,8 +527,9 @@ class Handler(BaseHTTPRequestHandler):
                 service.thread = None
                 start(service)
 
-        # Redirect back to the page the form was posted from, one level up.
-        target = self._action_prefix().rsplit("/", 2)[0] + "/"
+        # Redirect back to the page the form was posted from (relative, see
+        # _action_prefix).
+        target = "./"
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", target)
         self.end_headers()
