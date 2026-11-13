@@ -1,3 +1,10 @@
+// VS Code reads this file as JSON with comments.
+//
+// The Airflow configurations stop only in your own code (justMyCode: true).
+// To step into Airflow's own code, set "justMyCode": false. That makes the
+// debugger trace every line of Airflow and the DAG file import much slower,
+// so also raise AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT (seconds) in "env".
+// Airflow's default is 30; past it the run fails with "Process timed out".
 {
     "version": "0.2.0",
     "configurations": [
@@ -17,8 +24,9 @@
             "program": "/opt/venv/bin/airflow",
             "args": ["tasks", "test", "${input:dagId}", "${input:taskId}", "${input:logicalDate}"],
             "console": "integratedTerminal",
-            "justMyCode": false,
-            "python": "/opt/venv/bin/python"
+            "justMyCode": true,
+            "python": "/opt/venv/bin/python",
+            "env": { "AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT": "120" }
         },
         {
             "name": "Airflow: Test DAG",
@@ -27,8 +35,9 @@
             "program": "/opt/venv/bin/airflow",
             "args": ["dags", "test", "${input:dagId}", "${input:logicalDate}"],
             "console": "integratedTerminal",
-            "justMyCode": false,
-            "python": "/opt/venv/bin/python"
+            "justMyCode": true,
+            "python": "/opt/venv/bin/python",
+            "env": { "AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT": "120" }
         }
     ],
     "inputs": [
