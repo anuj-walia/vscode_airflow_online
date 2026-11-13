@@ -7,7 +7,8 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": true,
+            "python": "/opt/venv/bin/python"
         },
         {
             "name": "Airflow: Test Task",
@@ -16,7 +17,8 @@
             "program": "/opt/venv/bin/airflow",
             "args": ["tasks", "test", "${input:dagId}", "${input:taskId}", "${input:logicalDate}"],
             "console": "integratedTerminal",
-            "justMyCode": false
+            "justMyCode": false,
+            "python": "/opt/venv/bin/python"
         },
         {
             "name": "Airflow: Test DAG",
@@ -25,7 +27,8 @@
             "program": "/opt/venv/bin/airflow",
             "args": ["dags", "test", "${input:dagId}", "${input:logicalDate}"],
             "console": "integratedTerminal",
-            "justMyCode": false
+            "justMyCode": false,
+            "python": "/opt/venv/bin/python"
         }
     ],
     "inputs": [
