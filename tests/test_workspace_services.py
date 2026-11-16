@@ -163,7 +163,10 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 303)
         location = ctx.exception.headers["Location"]
         self.assertIn("error=", location)
-        with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.server.server_address[1], location)) as resp:
+        # The redirect is relative (it must stay under the proxy prefix), so
+        # resolve it against the URL that was posted to, as a browser does.
+        target = urllib.parse.urljoin(self.base + "dags-folder", location)
+        with urllib.request.urlopen(target) as resp:
             page = resp.read().decode()
         self.assertIn("must be inside", page)
         self.assertIn('name="dags_folder"', page)

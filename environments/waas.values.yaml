@@ -30,8 +30,23 @@ platform:
     managedCertificate:
       enabled: true
 
+# Hub and per-user metrics to Google Managed Prometheus, through an
+# OpenTelemetry Collector. Needs the Hub service and role under
+# jupyterhub.hub below, and roles/monitoring.metricWriter granted to the
+# Kubernetes ServiceAccount otel-collector (docs/operations.md, Observability).
+observability:
+  enabled: true
+
 jupyterhub:
   hub:
+    # The collector's Hub identity: an API-only service that may read
+    # /hub/metrics and nothing else.
+    services:
+      otel-collector: {}
+    loadRoles:
+      otel-metrics:
+        scopes: ["read:metrics"]
+        services: ["otel-collector"]
     db:
       # Hub state lives in Cloud SQL (instance waas-hub-db, private IP only).
       # 10.40.0.3 is the private address scripts/create-hub-db-secret.sh printed

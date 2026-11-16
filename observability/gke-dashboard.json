@@ -1,0 +1,236 @@
+{
+  "displayName": "Airflow platform",
+  "mosaicLayout": {
+    "columns": 48,
+    "tiles": [
+      {
+        "xPos": 0,
+        "yPos": 0,
+        "width": 48,
+        "height": 13,
+        "widget": {
+          "title": "Cluster",
+          "collapsibleGroup": {
+            "collapsed": false
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 1,
+        "width": 32,
+        "height": 12,
+        "widget": {
+          "title": "Node CPU use (share of allocatable)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "prometheusQuery": "kubernetes_io:node_cpu_allocatable_utilization{cluster_name=\"airflow-waas\"}"
+                },
+                "plotType": "LINE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 32,
+        "yPos": 1,
+        "width": 16,
+        "height": 12,
+        "widget": {
+          "title": "Pods waiting to be scheduled",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "prometheusQuery": "sum(kube_pod_status_phase{cluster=\"airflow-waas\",phase=\"Pending\"})"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 13,
+        "width": 48,
+        "height": 27,
+        "widget": {
+          "title": "Pods",
+          "collapsibleGroup": {
+            "collapsed": false
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 14,
+        "width": 24,
+        "height": 14,
+        "widget": {
+          "title": "Pod phase (value 1 = current phase)",
+          "timeSeriesTable": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "prometheusQuery": "kube_pod_status_phase{cluster=\"airflow-waas\",namespace=\"airflow-waas\"} == 1"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 24,
+        "yPos": 14,
+        "width": 24,
+        "height": 14,
+        "widget": {
+          "title": "Container restarts, last hour",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "prometheusQuery": "increase(kube_pod_container_status_restarts_total{cluster=\"airflow-waas\",namespace=\"airflow-waas\"}[1h])"
+                },
+                "plotType": "LINE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 28,
+        "width": 48,
+        "height": 12,
+        "widget": {
+          "title": "Memory used per pod",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "prometheusQuery": "sum by (pod_name) (kubernetes_io:container_memory_used_bytes{cluster_name=\"airflow-waas\",namespace_name=\"airflow-waas\"})"
+                },
+                "plotType": "LINE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 40,
+        "width": 48,
+        "height": 11,
+        "widget": {
+          "title": "Hub",
+          "collapsibleGroup": {
+            "collapsed": false
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 41,
+        "width": 12,
+        "height": 10,
+        "widget": {
+          "title": "Running workspaces",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "prometheusQuery": "jupyterhub_running_servers"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 12,
+        "yPos": 41,
+        "width": 12,
+        "height": 10,
+        "widget": {
+          "title": "Active users, last 24 hours",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "prometheusQuery": "jupyterhub_active_users{period=\"24h\"}"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 24,
+        "yPos": 41,
+        "width": 24,
+        "height": 10,
+        "widget": {
+          "title": "Workspace start time",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "prometheusQuery": "histogram_quantile(0.95, sum by (le) (rate(jupyterhub_server_spawn_duration_seconds_bucket{status=\"success\"}[1h])))"
+                },
+                "legendTemplate": "p95",
+                "plotType": "LINE"
+              },
+              {
+                "timeSeriesQuery": {
+                  "prometheusQuery": "histogram_quantile(0.5, sum by (le) (rate(jupyterhub_server_spawn_duration_seconds_bucket{status=\"success\"}[1h])))"
+                },
+                "legendTemplate": "p50",
+                "plotType": "LINE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 51,
+        "width": 48,
+        "height": 17,
+        "widget": {
+          "title": "Users",
+          "collapsibleGroup": {
+            "collapsed": false
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 52,
+        "width": 24,
+        "height": 16,
+        "widget": {
+          "title": "Minutes since last activity",
+          "timeSeriesTable": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "prometheusQuery": "(time() - waas_user_last_activity_timestamp_seconds) / 60"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 24,
+        "yPos": 52,
+        "width": 24,
+        "height": 16,
+        "widget": {
+          "title": "Workspace running (1 = yes)",
+          "timeSeriesTable": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "prometheusQuery": "waas_user_server_running"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

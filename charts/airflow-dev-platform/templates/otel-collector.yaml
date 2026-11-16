@@ -1,0 +1,193 @@
+{{/*
+The collector's own configuration. A named template so the Deployment can hash
+it (a file cannot include itself) and roll the pod when it changes.
+*/}}
+{{- define "airflow-dev-platform.otelCollectorConfig" -}}
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: jupyterhub
+          scrape_interval: {{ .Values.observability.collector.scrapeInterval }}
+          metrics_path: /hub/metrics
+          authorization:
+            type: Bearer
+            credentials_file: /var/run/hub-token/token
+          static_configs:
+            - targets: ["hub:8081"]
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+  # Export only what the dashboard charts (and `up`, to see a failing scrape).
+  # The Hub's request-duration histograms are hundreds of series that nothing
+  # reads, and Google bills per sample. tests/test_chart_render.py checks every
+  # Hub metric in observability/gke-dashboard.json passes this filter.
+  filter:
+    error_mode: ignore
+    metrics:
+      metric:
+        - 'not IsMatch(name, "^(up|jupyterhub_running_servers|jupyterhub_total_users|jupyterhub_active_users|jupyterhub_server_spawn_duration_seconds.*|waas_user_.*)$")'
+  resourcedetection:
+    detectors: [gcp]
+    timeout: 10s
+  # The Google exporter files each series under the namespace it came from.
+  resource:
+    attributes:
+      - key: k8s.namespace.name
+        value: ${env:POD_NAMESPACE}
+        action: upsert
+  batch: {}
+exporters:
+  googlemanagedprometheus: {}
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [memory_limiter, filter, resourcedetection, resource, batch]
+      exporters: [googlemanagedprometheus]
+{{- end -}}
+{{- if .Values.observability.enabled }}
+{{- $collector := .Values.observability.collector }}
+---
+# ---------------------------------------------------------------------------
+# OpenTelemetry Collector — scrapes the Hub's /hub/metrics and exports to
+# Google Managed Service for Prometheus. Rendered only when
+# observability.enabled is true; the chart's validation refuses it without
+# GKE and without the Hub service that gives it an API token.
+#
+# Cluster and pod health metrics are NOT collected here: GKE already exports
+# those. This collector only carries what GKE cannot see (the Hub's own
+# metrics and the per-user activity gauges from hub.extraConfig).
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+# The collector never calls the Kubernetes API, and Workload Identity does not
+# need this token: do not hand one out.
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+data:
+  config.yaml: |
+    {{- include "airflow-dev-platform.otelCollectorConfig" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: 1
+  # Two collectors scraping at once would write duplicate samples.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-collector
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        # The only label z2jh's Hub NetworkPolicy admits on port 8081.
+        hub.jupyter.org/network-access-hub: "true"
+      annotations:
+        checksum/config: {{ include "airflow-dev-platform.otelCollectorConfig" . | sha256sum }}
+    spec:
+      serviceAccountName: otel-collector
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # Stay on the always-on core node. There is deliberately no toleration for
+      # the workspace pool's taint: a collector there would stop that pool
+      # scaling back to zero.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: hub.jupyter.org/node-purpose
+                    operator: In
+                    values: [core]
+      containers:
+        - name: otel-collector
+          image: {{ $collector.image.repository }}:{{ $collector.image.tag }}
+          args: ["--config=/etc/otelcol/config.yaml"]
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: health
+              containerPort: 13133
+          livenessProbe:
+            httpGet: {path: /, port: health}
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: {path: /, port: health}
+            periodSeconds: 10
+          resources:
+            {{- toYaml $collector.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol
+              readOnly: true
+            - name: hub-token
+              mountPath: /var/run/hub-token
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector
+        # z2jh stores each hub.services.<name> token in the Secret "hub".
+        - name: hub-token
+          secret:
+            secretName: hub
+            items:
+              - key: hub.services.otel-collector.apiToken
+                path: token
+---
+# Nothing needs to reach the collector (the health port is only probed by the
+# kubelet, which network policies do not block).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector
+  labels:
+    {{- include "airflow-dev-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+{{- end }}

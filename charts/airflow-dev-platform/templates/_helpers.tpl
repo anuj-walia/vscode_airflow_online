@@ -29,6 +29,14 @@ Fail early and loudly on a configuration that would produce an unprotected or
 unreachable platform, rather than at first login.
 */}}
 {{- define "airflow-dev-platform.validate" -}}
+{{- if .Values.observability.enabled }}
+  {{- if not .Values.platform.gke.enabled }}
+    {{- fail "observability requires platform.gke.enabled (the only exporter is Google Managed Prometheus)" }}
+  {{- end }}
+  {{- if not (hasKey (default dict .Values.jupyterhub.hub.services) "otel-collector") }}
+    {{- fail "observability needs jupyterhub.hub.services.otel-collector (even an empty map): z2jh makes the collector's Hub API token from it" }}
+  {{- end }}
+{{- end }}
 {{- if and .Values.platform.gke.enabled .Values.platform.aws.enabled }}
   {{- fail "platform.gke.enabled and platform.aws.enabled are both true; enable exactly one cloud" }}
 {{- end }}

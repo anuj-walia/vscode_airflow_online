@@ -159,6 +159,72 @@ kubectl -n airflow-prod describe resourcequota airflow-dev-platform
 kubectl top pods -n airflow-prod
 ```
 
+## Observability
+
+Google Cloud only, off by default (`observability.enabled`). An OpenTelemetry
+Collector (`otel-collector`, one pod on the core node) scrapes the Hub's
+`/hub/metrics` every 60 seconds and exports to Google Managed Service for
+Prometheus. `observability/gke-dashboard.json` is a Cloud Monitoring dashboard
+over that data and over what GKE already collects.
+
+| Section | Shows | Comes from |
+| :-- | :-- | :-- |
+| Cluster | CPU use per node, pods waiting to be scheduled | GKE built-in |
+| Pods | Phase, restarts, memory of each pod in the platform namespace | GKE built-in |
+| Hub | Running workspaces, users active in 24 hours, workspace start time (p50, p95) | the Hub, through the collector |
+| Users | Minutes since each user's last activity, and whether their workspace is running | the Hub, through the collector (`hub.extraConfig.06-activity-metrics`) |
+
+The collector exports only what the dashboard charts, plus `up` (a failing
+scrape shows as 0). The Hub's request-duration histograms alone are hundreds of
+series that nothing reads, and Google bills per sample.
+`tests/test_chart_render.py` fails if a metric the dashboard reads is not
+allowed through. To chart more, add its name to the `filter` processor in
+`templates/otel-collector.yaml`.
+
+**Cost.** Hub series: about 55 fixed (the start-time histogram dominates) plus
+3 per user, so roughly 85 for ten users. At 60 seconds that is about 3.7
+million samples a month, a few tenths of a dollar at Google's published
+Managed Service for Prometheus rate ($0.06 per million samples when this was
+written; check the current price). The built-in cluster and pod metrics are
+already enabled on the cluster, and this adds no collection for them.
+
+**Privacy.** The `user` label is the Hub username, an email address on the
+`waas` environment. That is acceptable only because its OAuth audience is
+Internal. Do not enable this in an environment where usernames are opaque
+identifiers a viewer should not see, or where people outside the company can
+sign in.
+
+**The dashboard is written for `waas` only.** Its queries are scoped to the
+cluster `airflow-waas` and the namespace `airflow-waas`, because the project is
+shared with other teams' clusters. For another environment, copy
+`observability/gke-dashboard.json` and change those two names before creating it;
+a second Hub exporting to the same project would otherwise add a second series
+to every Hub widget.
+
+**Turn it on** (the chart side is per environment; `waas` already has its values):
+
+```bash
+# 1. Let the collector write metrics. Workload Identity, no key, no Google
+#    service account. The member is the Kubernetes ServiceAccount.
+gcloud projects add-iam-policy-binding <project-id> --role roles/monitoring.metricWriter \
+  --member "principal://iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/<project-id>.svc.id.goog/subject/ns/<namespace>/sa/otel-collector" \
+  --condition None
+
+# 2. Deploy as usual (scripts/deploy.sh). Check the collector:
+kubectl -n <namespace> get pod -l app.kubernetes.io/name=otel-collector
+kubectl -n <namespace> logs deploy/otel-collector
+
+# 3. Create the dashboard once.
+scripts/create-dashboard.sh --project <project-id> --labels lab=gcp-pca
+```
+
+Series appear within about five minutes. Workspace start time stays empty until
+a workspace has started after the deploy.
+
+**Turn it off:** set `observability.enabled: false` and redeploy; delete the
+dashboard with the command the script printed; remove the IAM grant with
+`gcloud projects remove-iam-policy-binding` and the same arguments.
+
 ## Runbook
 
 ### A spawn fails or hangs

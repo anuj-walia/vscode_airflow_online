@@ -78,6 +78,35 @@ platform:
       name: gp3
 
 # ===========================================================================
+# observability — optional metrics collection (Google Cloud only)
+#
+# An OpenTelemetry Collector scrapes the Hub's /hub/metrics and exports to
+# Google Managed Service for Prometheus. Off by default. Enabling it needs:
+#   * platform.gke.enabled (the only exporter is Google's), and
+#   * an entry for the collector under jupyterhub.hub.services, because z2jh
+#     makes the collector's Hub API token from it:
+#       jupyterhub.hub.services.otel-collector: {}
+#       jupyterhub.hub.loadRoles.otel-metrics:
+#         scopes: ["read:metrics"]
+#         services: ["otel-collector"]
+#   * roles/monitoring.metricWriter granted to the Kubernetes ServiceAccount
+#     `otel-collector` through Workload Identity (see docs/operations.md).
+# ===========================================================================
+observability:
+  enabled: false
+  collector:
+    image:
+      repository: otel/opentelemetry-collector-contrib
+      # Keep equal to OTEL_COLLECTOR_VERSION in VERSIONS.env (a test checks).
+      tag: "0.164.0"
+    scrapeInterval: 60s
+    # Explicit on purpose: the namespace LimitRange would otherwise give a pod
+    # without limits 2 CPU / 16Gi and eat the namespace quota.
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 200m, memory: 256Mi}
+
+# ===========================================================================
 # jupyterhub — Zero to JupyterHub subchart
 # ===========================================================================
 jupyterhub:
@@ -387,6 +416,76 @@ jupyterhub:
         if _admin_emails:
             c.Authenticator.post_auth_hook = _grant_admin
             print(f"{len(_admin_emails)} bootstrap admin email(s) configured", file=sys.stderr)
+
+      06-activity-metrics: |
+        # Per-user activity gauges on /hub/metrics, read from the Hub database
+        # each time the endpoint is scraped. Three metrics, one label `user`:
+        #   waas_user_last_activity_timestamp_seconds  (absent if never active)
+        #   waas_user_server_running                   (1 or 0)
+        #   waas_user_server_started_timestamp_seconds (only while running)
+        #
+        # The `user` label is the Hub username, which is an email address on
+        # the waas environment: fine only because its OAuth audience is
+        # Internal. See docs/superpowers/plans/2026-11-16-otel-observability.md,
+        # Decision 2. A failure here must never break the rest of /hub/metrics,
+        # so collect() logs and yields nothing instead of raising.
+        import logging
+        from datetime import timezone
+
+        from jupyterhub import orm
+        from jupyterhub.app import JupyterHub
+        from prometheus_client import REGISTRY
+        from prometheus_client.core import GaugeMetricFamily
+
+        def _epoch(moment):
+            # The Hub stores naive UTC datetimes.
+            return moment.replace(tzinfo=timezone.utc).timestamp()
+
+        def activity_metric_families(users):
+            last_activity = GaugeMetricFamily(
+                "waas_user_last_activity_timestamp_seconds",
+                "Unix time of the user's last activity",
+                labels=["user"],
+            )
+            running = GaugeMetricFamily(
+                "waas_user_server_running",
+                "1 if the user's workspace is running, else 0",
+                labels=["user"],
+            )
+            started = GaugeMetricFamily(
+                "waas_user_server_started_timestamp_seconds",
+                "Unix time the user's running workspace started",
+                labels=["user"],
+            )
+            for user in users:
+                if user.last_activity is not None:
+                    last_activity.add_metric([user.name], _epoch(user.last_activity))
+                # orm_spawners is a dict keyed by server name ("" is the default).
+                live = [s for s in user.orm_spawners.values() if s.server is not None]
+                running.add_metric([user.name], 1 if live else 0)
+                starts = [s.started for s in live if s.started is not None]
+                if starts:
+                    started.add_metric([user.name], _epoch(min(starts)))
+            return [last_activity, running, started]
+
+        class ActivityCollector:
+            def describe(self):
+                # Without this the default registry calls collect() at
+                # registration, which is before the Hub database is open.
+                return []
+
+            def collect(self):
+                try:
+                    users = JupyterHub.instance().db.query(orm.User).all()
+                    families = activity_metric_families(users)
+                except Exception as error:
+                    logging.getLogger("JupyterHub").warning(
+                        "activity metrics unavailable: %s", error
+                    )
+                    return
+                yield from families
+
+        REGISTRY.register(ActivityCollector())
 
     # A single Hub is the supported topology; make voluntary disruptions wait.
     pdb:
