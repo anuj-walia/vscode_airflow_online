@@ -29,7 +29,7 @@ SCRIPT = REPO_ROOT / "scripts/create-dashboard.sh"
 KNOWN = {
     "kubernetes_io:node_cpu_allocatable_utilization",
     "kube_pod_status_phase",
-    "kube_pod_container_status_restarts_total",
+    "kubernetes_io:container_restart_count",
     "kubernetes_io:container_memory_used_bytes",
     "jupyterhub_running_servers",
     "jupyterhub_active_users",

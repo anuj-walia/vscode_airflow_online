@@ -89,7 +89,7 @@
             "dataSets": [
               {
                 "timeSeriesQuery": {
-                  "prometheusQuery": "increase(kube_pod_container_status_restarts_total{cluster=\"airflow-waas\",namespace=\"airflow-waas\"}[1h])"
+                  "prometheusQuery": "increase(kubernetes_io:container_restart_count{cluster_name=\"airflow-waas\",namespace_name=\"airflow-waas\"}[1h])"
                 },
                 "plotType": "LINE"
               }
